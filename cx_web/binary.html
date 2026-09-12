@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CX Binary</title>
+  <link rel="stylesheet" href="./theme.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>window.CX_API_BASE = window.CX_API_BASE || localStorage.getItem("CX_API_BASE") || "";</script>
+  <script src="./cx-auth.js"></script>
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body { height: 100vh; overflow: hidden; }
+    .cx-app { height: 100vh; padding-bottom: 12px; }
+    #chart-container { flex:1; min-height:220px; border-radius:16px; border:1px solid rgba(212,175,55,0.18); overflow:hidden; background:#101010; }
+    .trade-box { display:flex; flex-direction:column; gap:10px; }
+    .payout { text-align:center; font-size:13px; color:#9a9a9a; }
+    .payout strong { color:#d4af37; }
+    .actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .status { text-align:center; font-size:12px; color:#8b8b8b; min-height:18px; }
+  </style>
+</head>
+<body>
+  <div class="cx-app">
+    <header class="cx-header">
+      <div class="cx-brand"><div class="cx-brand-mark">CX</div><div>Binary</div></div>
+      <div class="cx-badge">TON <span id="userBalance" data-cx-balance>0.00</span></div>
+    </header>
+    <div id="chart-container"></div>
+    <section class="cx-card trade-box">
+      <div class="cx-label">Stake amount (TON)</div>
+      <div class="cx-amt-grid">
+        <button class="cx-amt active" onclick="setAmount(1, this)">1</button>
+        <button class="cx-amt" onclick="setAmount(5, this)">5</button>
+        <button class="cx-amt" onclick="setAmount(10, this)">10</button>
+        <button class="cx-amt" onclick="setAmount(50, this)">50</button>
+      </div>
+      <div class="payout">Potential payout: <strong id="payoutDisplay">1.80 TON</strong> · Net <strong id="profitDisplay">+0.80</strong></div>
+      <div class="actions">
+        <button class="cx-btn cx-btn-down" onclick="executeTrade('down')">DOWN</button>
+        <button class="cx-btn cx-btn-up" onclick="executeTrade('up')">UP</button>
+      </div>
+      <div class="status" id="statusLine">Ready</div>
+    </section>
+    <nav class="cx-footer-nav">
+      <button class="cx-nav-item" onclick="location.href='dashboard.html'">Home</button>
+      <button class="cx-nav-item" onclick="location.href='wallet.html'">Wallet</button>
+      <button class="cx-nav-item active" onclick="location.href='binary.html'">Trade</button>
+      <button class="cx-nav-item" onclick="location.href='app.html'">More</button>
+    </nav>
+  </div>
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#070707"); tg.setBackgroundColor("#070707"); } catch(e){} }
+    let selectedAmount = 1, balance = 0;
+    function setAmount(amt, btn) {
+      selectedAmount = amt;
+      document.querySelectorAll(".cx-amt").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById("payoutDisplay").textContent = (amt*1.8).toFixed(2)+" TON";
+      document.getElementById("profitDisplay").textContent = "+"+(amt*0.8).toFixed(2);
+    }
+    const chartContainer = document.getElementById("chart-container");
+    const chart = LightweightCharts.createChart(chartContainer, {
+      layout: { background: { color: "#101010" }, textColor: "#8b8b8b" },
+      grid: { vertLines: { color: "rgba(212,175,55,0.05)" }, horzLines: { color: "rgba(212,175,55,0.05)" } },
+      rightPriceScale: { borderColor: "rgba(212,175,55,0.15)" },
+      timeScale: { borderColor: "rgba(212,175,55,0.15)", timeVisible: true, secondsVisible: true },
+    });
+    const candleSeries = chart.addCandlestickSeries({ upColor:"#2f9b6a", downColor:"#c24b4b", borderVisible:false, wickUpColor:"#2f9b6a", wickDownColor:"#c24b4b" });
+    new ResizeObserver(() => chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight })).observe(chartContainer);
+    let lastClose = 0;
+    async function loadRealCandles() {
+      try {
+        let candles = [];
+        if (window.CXAuth && CXAuth.getInitData && CXAuth.getInitData()) {
+          try {
+            const res = await CXAuth.apiFetch("/api/binary/klines?symbol=BTCUSDT&interval=1m&limit=120");
+            candles = res.candles || [];
+          } catch (e) {}
+        }
+        if (!candles.length) {
+          const raw = await (await fetch("https://api1.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=120")).json();
+          candles = raw.map(k => ({ time: Math.floor(k[0]/1000), open:+k[1], high:+k[2], low:+k[3], close:+k[4] }));
+        }
+        if (candles.length) {
+          candleSeries.setData(candles);
+          lastClose = candles[candles.length-1].close;
+          document.getElementById("statusLine").textContent = "Live BTCUSDT · 1m";
+        }
+      } catch (e) {
+        document.getElementById("statusLine").textContent = "Chart feed unavailable";
+      }
+    }
+    loadRealCandles();
+    setInterval(async () => {
+      try {
+        const j = await (await fetch("https://api1.binance.com/api/v3/ticker/price?symbol=BTCUSDT")).json();
+        const price = Number(j.price);
+        if (!price) return;
+        const tnow = Math.floor(Date.now()/1000);
+        const open = lastClose || price;
+        candleSeries.update({ time: tnow, open, high: Math.max(open, price), low: Math.min(open, price), close: price });
+        lastClose = price;
+      } catch (e) {}
+    }, 3000);
+    async function executeTrade(direction) {
+      const status = document.getElementById("statusLine");
+      const balEl = document.getElementById("userBalance");
+      let bal = parseFloat((balEl && balEl.dataset.balance) || balance || 0);
+      if (window.CX_ACCOUNT && window.CX_ACCOUNT.balance_ton != null) bal = Number(window.CX_ACCOUNT.balance_ton);
+      if (bal < selectedAmount) { status.textContent = "Insufficient TON balance"; return; }
+      if (!window.CXAuth || !CXAuth.getInitData()) { status.textContent = "Open this page inside Telegram Mini App"; return; }
+      status.textContent = "Submitting order…";
+      try {
+        const res = await CXAuth.apiFetch("/api/binary/open", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ direction, amount: selectedAmount, duration_sec: 60, symbol: "BTCUSDT",
+            client_request_id: "bin_"+Date.now()+"_"+Math.random().toString(16).slice(2) })
+        });
+        if (res.balance_ton != null && balEl) {
+          balEl.textContent = Number(res.balance_ton).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:4});
+          balEl.dataset.balance = String(res.balance_ton);
+          if (window.CX_ACCOUNT) window.CX_ACCOUNT.balance_ton = res.balance_ton;
+        }
+        const trade = res.trade || {};
+        status.textContent = "Order #"+(trade.id||"-")+" · "+(direction==="up"?"UP":"DOWN")+" · entry "+(trade.entry_price||"-")+" · 60s";
+      } catch (e) { status.textContent = "Error: "+(e.message||e); }
+    }
+    CXAuth.ready(async function () {
+      const bal = document.getElementById("userBalance");
+      const data = await CXAuth.bindBalance(bal, "ton");
+      if (data && data.account) { window.CX_ACCOUNT = data.account; balance = Number(data.account.balance_ton||0); if (bal) bal.dataset.balance = String(balance); }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+from aiogram.fsm.state import State, StatesGroup
+
+class UserStates(StatesGroup):
+    waiting_for_withdraw_address = State()
+    waiting_for_withdraw_amount = State()
+    waiting_for_withdraw_pin = State()
+    waiting_for_stake_amount = State()
+    waiting_for_kyc_email = State()
+    waiting_for_kyc_photo = State()
+    waiting_for_admin_add_balance = State()
+    waiting_for_transfer_userid = State()
+    waiting_for_transfer_amount = State()
+    waiting_for_pin_setup = State()
+    waiting_for_whitelist_addr = State()
+    waiting_for_swap_amount = State()
+    waiting_for_support_msg = State()
+    waiting_for_admin_reply_ticket = State()

@@ -1,0 +1,90 @@
+# CX Bot stack: bot + redis + (optional) cloudflared tunnel
+#
+# Start without tunnel (dev / local):
+#   docker compose up -d
+#
+# Start with permanent Cloudflare Tunnel:
+#   1) One-time setup (see cloudflared/README.md)
+#   2) docker compose --profile tunnel up -d
+
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_NAME: /app/data/cx_database.db
+      API_ENABLED: "true"
+      API_HOST: "0.0.0.0"
+      API_PORT: "8080"
+      REDIS_URL: redis://redis:6379/0
+    # Only publish port on host for local debug; Tunnel talks over Docker network
+    ports:
+      - "8080:8080"
+    volumes:
+      - cx_data:/app/data
+    depends_on:
+      - redis
+    networks:
+      - cx_net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - cx_net
+    # ports:
+    #   - "6379:6379"
+
+  # ---------- Permanent Cloudflare Tunnel ----------
+  # Requires profile: tunnel
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    depends_on:
+      bot:
+        condition: service_healthy
+    networks:
+      - cx_net
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: cx
+      POSTGRES_PASSWORD: cx_password_change_me
+      POSTGRES_DB: cx
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - cx_net
+
+volumes:
+  cx_data:
+  redis_data:
+  pg_data:
+
+networks:
+  cx_net:
+    driver: bridge

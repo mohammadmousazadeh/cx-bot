@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CX Apps</title>
+  <link rel="stylesheet" href="./theme.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>window.CX_API_BASE = window.CX_API_BASE || localStorage.getItem("CX_API_BASE") || "";</script>
+  <script src="./cx-auth.js"></script>
+  <style>
+    .menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .menu-card {
+      background: #141414; border: 1px solid rgba(212,175,55,0.18); border-radius: 16px;
+      padding: 18px 14px; cursor: pointer; text-align: center;
+    }
+    .menu-card:active { transform: scale(0.98); }
+    .menu-ico {
+      width: 40px; height: 40px; margin: 0 auto 10px; border-radius: 12px;
+      background: rgba(212,175,55,0.12); border: 1px solid rgba(212,175,55,0.25);
+      display: grid; place-items: center; color: #d4af37; font-weight: 800;
+    }
+    .menu-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+    .menu-desc { font-size: 11px; color: #8b8b8b; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <div class="cx-app">
+    <header class="cx-header">
+      <div class="cx-brand"><div class="cx-brand-mark">CX</div><div>Apps</div></div>
+      <div class="cx-badge">TON <span id="userBalance" data-cx-balance>0.00</span></div>
+    </header>
+    <section class="cx-hero">
+      <div class="cx-hero-label">CX SuperApp</div>
+      <div class="cx-hero-value" style="font-size:22px">Trading Suite</div>
+      <div class="cx-hero-sub"><span class="cx-chip">Black & Gold Terminal</span></div>
+    </section>
+    <div class="menu-grid">
+      <div class="menu-card" onclick="location.href='dashboard.html'"><div class="menu-ico">H</div><div class="menu-title">Dashboard</div><div class="menu-desc">Balance & markets</div></div>
+      <div class="menu-card" onclick="location.href='wallet.html'"><div class="menu-ico">W</div><div class="menu-title">Wallet</div><div class="menu-desc">Assets & deposit memo</div></div>
+      <div class="menu-card" onclick="location.href='binary.html'"><div class="menu-ico">B</div><div class="menu-title">Binary</div><div class="menu-desc">Live chart options</div></div>
+      <div class="menu-card" onclick="location.href='swap.html'"><div class="menu-ico">S</div><div class="menu-title">Swap</div><div class="menu-desc">TON to USDT</div></div>
+      <div class="menu-card" onclick="location.href='game.html'"><div class="menu-ico">G</div><div class="menu-title">Sniper</div><div class="menu-desc">Tick chart training</div></div>
+      <div class="menu-card" onclick="Telegram.WebApp.close()"><div class="menu-ico">P</div><div class="menu-title">Prop</div><div class="menu-desc">Open bot for challenges</div></div>
+    </div>
+    <nav class="cx-footer-nav">
+      <button class="cx-nav-item" onclick="location.href='dashboard.html'">Home</button>
+      <button class="cx-nav-item" onclick="location.href='wallet.html'">Wallet</button>
+      <button class="cx-nav-item" onclick="location.href='binary.html'">Trade</button>
+      <button class="cx-nav-item active" onclick="location.href='app.html'">More</button>
+    </nav>
+  </div>
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#070707"); tg.setBackgroundColor("#070707"); } catch(e){} }
+    CXAuth.ready(async () => { await CXAuth.bindBalance(document.getElementById("userBalance"), "ton"); });
+  </script>
+</body>
+</html>

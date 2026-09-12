@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CX Swap</title>
+  <link rel="stylesheet" href="./theme.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>window.CX_API_BASE = window.CX_API_BASE || localStorage.getItem("CX_API_BASE") || "";</script>
+  <script src="./cx-auth.js"></script>
+</head>
+<body>
+  <div class="cx-app">
+    <header class="cx-header">
+      <div class="cx-brand"><div class="cx-brand-mark">CX</div><div>Swap</div></div>
+      <div class="cx-badge">TON <span id="userBalance" data-cx-balance>0.00</span></div>
+    </header>
+    <section class="cx-card">
+      <div class="cx-label">From</div>
+      <input class="cx-input" id="amountIn" type="number" min="0" step="0.01" placeholder="0.00" dir="ltr" style="text-align:left;margin-bottom:8px" />
+      <div class="cx-muted">Asset: TON</div>
+      <div class="cx-divider"></div>
+      <div class="cx-label">To (estimate)</div>
+      <div class="cx-hero-value" style="font-size:24px" id="amountOut">0.00 <small style="color:#d4af37">USDT</small></div>
+      <div class="cx-muted" style="margin-top:8px">Rate: <span id="rateLabel">—</span></div>
+      <button class="cx-btn cx-btn-gold" style="margin-top:16px" onclick="requestSwap()">Continue in Bot</button>
+      <p class="cx-muted" style="margin-top:12px;line-height:1.6">Swap execution is finalized in the Telegram bot for ledger safety.</p>
+    </section>
+    <nav class="cx-footer-nav">
+      <button class="cx-nav-item" onclick="location.href='dashboard.html'">Home</button>
+      <button class="cx-nav-item" onclick="location.href='wallet.html'">Wallet</button>
+      <button class="cx-nav-item" onclick="location.href='binary.html'">Trade</button>
+      <button class="cx-nav-item active" onclick="location.href='app.html'">More</button>
+    </nav>
+  </div>
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#070707"); tg.setBackgroundColor("#070707"); } catch(e){} }
+    let rate = 0;
+    async function loadRate() {
+      try {
+        const j = await (await fetch("https://api1.binance.com/api/v3/ticker/price?symbol=TONUSDT")).json();
+        rate = Number(j.price) || 0;
+        document.getElementById("rateLabel").textContent = rate ? ("1 TON = " + rate.toFixed(4) + " USDT") : "unavailable";
+        recalc();
+      } catch(e) { document.getElementById("rateLabel").textContent = "unavailable"; }
+    }
+    function recalc() {
+      const amt = Number(document.getElementById("amountIn").value || 0);
+      document.getElementById("amountOut").innerHTML = ((amt * rate) || 0).toFixed(2) + ' <small style="color:#d4af37">USDT</small>';
+    }
+    document.getElementById("amountIn").addEventListener("input", recalc);
+    function requestSwap() {
+      if (tg) { tg.showAlert("Open the bot swap menu to complete this conversion on your ledger balance."); }
+      else alert("Open the bot to complete swap.");
+    }
+    loadRate(); setInterval(loadRate, 20000);
+    CXAuth.ready(async () => { await CXAuth.bindBalance(document.getElementById("userBalance"), "ton"); });
+  </script>
+</body>
+</html>

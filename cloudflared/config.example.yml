@@ -1,0 +1,14 @@
+# 1) Copy this file:
+#      cp cloudflared/config.example.yml cloudflared/config.yml
+# 2) Put tunnel credentials JSON as:
+#      cloudflared/credentials.json
+# 3) Edit tunnel id + hostname below
+
+tunnel: YOUR_TUNNEL_ID
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  # Public hostname → bot service inside Docker network
+  - hostname: api.YOUR_DOMAIN.com
+    service: http://bot:8080
+  - service: http_status:404

@@ -1,0 +1,4 @@
+# Cloudflare Pages project config (optional)
+name = "cx-webapp"
+compatibility_date = "2026-01-01"
+pages_build_output_dir = "public"

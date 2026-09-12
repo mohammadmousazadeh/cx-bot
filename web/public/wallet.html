@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CX Wallet</title>
+  <link rel="stylesheet" href="./theme.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>window.CX_API_BASE = window.CX_API_BASE || localStorage.getItem("CX_API_BASE") || "";</script>
+  <script src="./cx-auth.js"></script>
+  <style>
+    .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .tab { padding: 11px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #121212; color: #9a9a9a; font-weight: 700; font-size: 13px; cursor: pointer; }
+    .tab.active { background: linear-gradient(135deg, #f0d78c, #d4af37); color: #111; border-color: transparent; }
+    .panel { display: none; } .panel.active { display: block; }
+    .asset-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid rgba(212,175,55,0.1); }
+    .asset-row:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <div class="cx-app">
+    <header class="cx-header">
+      <div class="cx-brand"><div class="cx-brand-mark">CX</div><div>Wallet</div></div>
+      <button class="cx-badge" onclick="location.href='dashboard.html'" style="cursor:pointer">Back</button>
+    </header>
+    <section class="cx-hero">
+      <div class="cx-hero-label">Available Balance</div>
+      <div class="cx-hero-value"><span id="userBalance" data-cx-balance>0.00</span><small>TON</small></div>
+      <div class="cx-hero-sub"><span class="cx-chip">USDT <span id="usdtBalance">0.00</span></span></div>
+    </section>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('assets', this)">Assets</button>
+      <button class="tab" onclick="switchTab('deposit', this)">Deposit</button>
+    </div>
+    <section id="panel-assets" class="panel active cx-card">
+      <div class="asset-row"><div><div class="cx-sym">TON</div><div class="cx-name">Toncoin</div></div><div class="cx-price" id="tonAsset">0.00</div></div>
+      <div class="asset-row"><div><div class="cx-sym">USDT</div><div class="cx-name">Tether</div></div><div class="cx-price" id="usdtAsset">0.00</div></div>
+      <div class="cx-divider"></div>
+      <p class="cx-muted" style="line-height:1.6">Withdrawals are processed in the bot after security checks.</p>
+      <button class="cx-btn cx-btn-ghost" style="margin-top:12px" onclick="Telegram.WebApp.close()">Open Bot Menu</button>
+    </section>
+    <section id="panel-deposit" class="panel cx-card">
+      <div class="cx-label">Deposit Instructions</div>
+      <p class="cx-muted" style="line-height:1.7;margin-bottom:14px">Send TON to the exchange wallet and include your personal memo.</p>
+      <div class="cx-label">Memo format</div>
+      <div class="cx-input" id="memoBox" style="font-family:ui-monospace,monospace;direction:ltr;text-align:left">cx_YOUR_ID</div>
+      <p class="cx-muted" style="margin-top:10px;line-height:1.6">Without the correct memo, the deposit may not be credited automatically.</p>
+      <button class="cx-btn cx-btn-gold" style="margin-top:16px" onclick="copyMemo()">Copy Memo</button>
+    </section>
+    <nav class="cx-footer-nav">
+      <button class="cx-nav-item" onclick="location.href='dashboard.html'">Home</button>
+      <button class="cx-nav-item active" onclick="location.href='wallet.html'">Wallet</button>
+      <button class="cx-nav-item" onclick="location.href='binary.html'">Trade</button>
+      <button class="cx-nav-item" onclick="location.href='app.html'">More</button>
+    </nav>
+  </div>
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#070707"); tg.setBackgroundColor("#070707"); } catch(e){} }
+    function switchTab(name, btn) {
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+      btn.classList.add("active"); document.getElementById("panel-"+name).classList.add("active");
+    }
+    function copyMemo() {
+      const text = document.getElementById("memoBox").textContent.trim();
+      navigator.clipboard.writeText(text).then(() => { if (tg && tg.showAlert) tg.showAlert("Memo copied"); else alert("Memo copied"); });
+    }
+    CXAuth.ready(async function () {
+      const data = await CXAuth.bindBalance(document.getElementById("userBalance"), "ton");
+      if (data && data.account) {
+        const ton = Number(data.account.balance_ton||0), usdt = Number(data.account.usdt_balance||0);
+        document.getElementById("tonAsset").textContent = ton.toLocaleString("en-US",{maximumFractionDigits:4});
+        document.getElementById("usdtAsset").textContent = usdt.toLocaleString("en-US",{maximumFractionDigits:2});
+        document.getElementById("usdtBalance").textContent = usdt.toFixed(2);
+      }
+      if (data && data.user && data.user.id) document.getElementById("memoBox").textContent = "cx_"+data.user.id;
+    });
+  </script>
+</body>
+</html>

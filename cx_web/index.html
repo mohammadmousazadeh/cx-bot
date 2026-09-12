@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+ <title>CX Prop Trading Terminal</title>
+<link rel="stylesheet" href="./theme.css">
+
+<style>
+  :root {
+    --bg-color: #0a0a0a !important;
+    --card-bg: #161616 !important;
+    --primary: #d4af37 !important;
+    --up-color: #3d9a6a !important;
+    --down-color: #c45c5c !important;
+    --text-main: #f5f5f5 !important;
+    --text-muted: #9a9a9a !important;
+  }
+  body { background: #0a0a0a !important; color: #f5f5f5 !important; }
+</style>
+
+ <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<script>
+ // Set your public API URL (HTTPS) before cx-auth.js runs in production:
+ // window.CX_API_BASE = "https://api.your-domain.com";
+ window.CX_API_BASE = window.CX_API_BASE || localStorage.getItem("CX_API_BASE") || "";
+</script>
+<script src="./cx-auth.js"></script>
+
+ <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+ <style>
+ :root {
+ --bg-color: #0a0a0a;
+ --card-bg: #161616;
+ --primary: #d4af37;
+ --up-color: #3d9a6a;
+ --down-color: #c45c5c;
+ --text-main: #f8fafc;
+ --text-muted: #718096;
+ --border-color: rgba(255, 255, 255, 0.07);
+ }
+
+ * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+ body { background-color: var(--bg-color); color: var(--text-main); padding: 10px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; user-select: none; }
+
+ .header-stats {
+ display: grid;
+ grid-template-columns: repeat(3, 1fr);
+ gap: 8px;
+ margin-bottom: 8px;
+ }
+
+ .stat-card {
+ background: var(--card-bg);
+ border: 1px solid var(--border-color);
+ padding: 8px 10px;
+ border-radius: 12px;
+ text-align: center;
+ }
+
+ .stat-title { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+ .stat-value { font-size: 14px; font-weight: 800; color: #d4af37; }
+ .stat-value.up { color: var(--up-color); }
+ .stat-value.down { color: var(--down-color); }
+
+ #chart-container {
+ flex: 1;
+ width: 100%;
+ border-radius: 14px;
+ background: var(--card-bg);
+ border: 1px solid var(--border-color);
+ position: relative;
+ overflow: hidden;
+ }
+
+ .trade-controls {
+ background: var(--card-bg);
+ border: 1px solid var(--border-color);
+ border-radius: 16px;
+ padding: 12px;
+ margin-top: 8px;
+ display: flex;
+ flex-direction: column;
+ gap: 8px;
+ }
+
+ .control-row {
+ display: flex;
+ justify-content: space-between;
+ align-items: center;
+ font-size: 12px;
+ color: var(--text-muted);
+ }
+
+ .lot-selector {
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ width: 100%;
+ justify-content: center;
+ }
+
+ .lot-btn {
+ background: #1a1a1a;
+ border: 1px solid var(--border-color);
+ color: #fff;
+ padding: 6px 14px;
+ border-radius: 8px;
+ font-weight: bold;
+ font-size: 13px;
+ cursor: pointer;
+ }
+
+ .lot-btn.active {
+ background: #b8962e;
+ border-color: #d4af37;
+ }
+
+ .buttons-grid {
+ display: grid;
+ grid-template-columns: 1fr 1fr;
+ gap: 10px;
+ }
+
+ .btn-order {
+ padding: 14px;
+ border: none;
+ border-radius: 12px;
+ font-size: 15px;
+ font-weight: 800;
+ color: #fff;
+ cursor: pointer;
+ display: flex;
+ align-items: center;
+ justify-content: center;
+ gap: 6px;
+ transition: transform 0.1s;
+ }
+
+ .btn-order:active { transform: scale(0.97); }
+ .btn-buy { background: var(--up-color); box-shadow: 0 4px 15px rgba(0, 192, 135, 0.25); }
+ .btn-sell { background: var(--down-color); box-shadow: 0 4px 15px rgba(255, 59, 105, 0.25); }
+
+ .btn-close {
+ width: 100%;
+ padding: 10px;
+ border: 1px solid var(--border-color);
+ border-radius: 10px;
+ background: #1a1a1a;
+ color: #f8fafc;
+ font-weight: bold;
+ font-size: 13px;
+ cursor: pointer;
+ display: none;
+ }
+ </style>
+</head>
+<body>
+
+ <div class="header-stats">
+ <div class="stat-card">
+ <div class="stat-title">بالانس پراپ</div>
+ <div class="stat-value" id="balanceDisplay">10,000 TON</div>
+ </div>
+ <div class="stat-card">
+ <div class="stat-title">سود/زیان باز (P&L)</div>
+ <div class="stat-value" id="pnlDisplay">0.00 TON</div>
+ </div>
+ <div class="stat-card">
+ <div class="stat-title">تارگت مرحله ۱</div>
+ <div class="stat-value up" id="targetDisplay">+800 TON</div>
+ </div>
+ </div>
+
+ <div id="chart-container"></div>
+
+ <div class="trade-controls">
+ <div class="control-row">
+ <span>حجم سفارش معاملاتی (Lot Size):</span>
+ <span id="priceDisplay">قیمت زنده: در حال دریافت...</span>
+ </div>
+
+ <div class="lot-selector">
+ <button class="lot-btn active" onclick="setLot(1, this)">1.00 Lot</button>
+ <button class="lot-btn" onclick="setLot(2, this)">2.00 Lot</button>
+ <button class="lot-btn" onclick="setLot(5, this)">5.00 Lot</button>
+ <button class="lot-btn" onclick="setLot(10, this)">10.00 Lot</button>
+ </div>
+
+ <div class="buttons-grid" id="orderButtons">
+ <button class="btn-order btn-sell" onclick="openPosition('sell')">
+ فروش (SELL)
+ </button>
+ <button class="btn-order btn-buy" onclick="openPosition('buy')">
+ خرید (BUY)
+ </button>
+ </div>
+
+ <button class="btn-close" id="closeBtn" onclick="closePosition()">
+ بستن معامله باز (تسویه P&L به TON)
+ </button>
+ </div>
+
+ <script>
+ const tg = window.Telegram.WebApp;
+ tg.expand();
+
+ const urlParams = new URLSearchParams(window.location.search);
+ let balance = parseFloat(urlParams.get('balance')) || 10000.0;
+ let activePosition = null;
+ let selectedLot = 1.0;
+
+ function updateHeader() {
+ document.getElementById('balanceDisplay').innerText = `${balance.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})} TON`;
+ }
+ updateHeader();
+
+ function setLot(lot, btn) {
+ if(activePosition) return;
+ selectedLot = lot;
+ document.querySelectorAll('.lot-btn').forEach(b => b.classList.remove('active'));
+ btn.classList.add('active');
+ }
+
+ // ایجاد چارت TradingView سبک
+ const chartContainer = document.getElementById('chart-container');
+ const chart = LightweightCharts.createChart(chartContainer, {
+ layout: { background: { color: '#161616' }, textColor: '#718096' },
+ grid: { vertLines: { color: 'rgba(255,255,255,0.03)' }, horzLines: { color: 'rgba(255,255,255,0.03)' } },
+ timeScale: { timeVisible: true, secondsVisible: true }
+ });
+
+ const candleSeries = chart.addCandlestickSeries({
+ upColor: '#3d9a6a', downColor: '#c45c5c',
+ borderVisible: false, wickUpColor: '#3d9a6a', wickDownColor: '#c45c5c'
+ });
+
+ let currentPrice = 68420.0;
+ let currentTime = Math.floor(Date.now() / 1000) - 300;
+ let data = [];
+
+ for (let i = 0; i < 60; i++) {
+ let open = currentPrice;
+ let close = open + (Math.random() - 0.49) * 15;
+ let high = Math.max(open, close) + Math.random() * 8;
+ let low = Math.min(open, close) - Math.random() * 8;
+ data.push({ time: currentTime + i * 5, open, high, low, close });
+ currentPrice = close;
+ }
+ candleSeries.setData(data);
+
+ // جریان قیمت زنده و محاسبه P&L بر حسب TON
+ setInterval(() => {
+ let open = currentPrice;
+ let close = open + (Math.random() - 0.49) * 5;
+ let high = Math.max(open, close) + Math.random() * 2;
+ let low = Math.min(open, close) - Math.random() * 2;
+ let t = Math.floor(Date.now() / 1000);
+ candleSeries.update({ time: t, open, high, low, close });
+ currentPrice = close;
+ document.getElementById('priceDisplay').innerText = `BTC: $${currentPrice.toFixed(2)}`;
+
+ if (activePosition) {
+ let diff = currentPrice - activePosition.entryPrice;
+ if (activePosition.type === 'sell') diff = -diff;
+
+ // فرمول تبدیل نوسان بازار به سود/زیان TON
+ let pnlTon = (diff * 0.1) * activePosition.lot;
+ activePosition.currentPnl = pnlTon;
+
+ const pnlEl = document.getElementById('pnlDisplay');
+ pnlEl.innerText = `${pnlTon >= 0 ? '+' : ''}${pnlTon.toFixed(2)} TON`;
+ pnlEl.className = `stat-value ${pnlTon >= 0 ? 'up' : 'down'}`;
+ }
+ }, 1000);
+
+ function openPosition(type) {
+ if (activePosition) return;
+
+ activePosition = {
+ type: type,
+ entryPrice: currentPrice,
+ lot: selectedLot,
+ currentPnl: 0.0
+ };
+
+ document.getElementById('orderButtons').style.display = 'none';
+ document.getElementById('closeBtn').style.display = 'block';
+ document.getElementById('closeBtn').innerText = ` بستن پوزیشن (${type === 'buy' ? 'BUY' : 'SELL'} ${selectedLot} Lot)`;
+ }
+
+ function closePosition() {
+ if (!activePosition) return;
+
+ balance += activePosition.currentPnl;
+ activePosition = null;
+
+ updateHeader();
+ document.getElementById('pnlDisplay').innerText = '0.00 TON';
+ document.getElementById('pnlDisplay').className = 'stat-value';
+ document.getElementById('orderButtons').style.display = 'grid';
+ document.getElementById('closeBtn').style.display = 'none';
+ }
+ </script>
+
+<script>
+ CXAuth.ready(async function () {
+ // Prefer server balance; ignore forged ?bal= for display authority
+ const targets = [
+ document.getElementById("userBal"),
+ document.getElementById("balanceDisplay"),
+ document.getElementById("tonBalance"),
+ document.querySelector("[data-cx-balance]"),
+ ].filter(Boolean);
+ if (targets.length) {
+ const data = await CXAuth.bindBalance(targets[0], "ton");
+ if (data && data.account) {
+ window.CX_ACCOUNT = data.account;
+ window.CX_USER = data.user;
+ // sync other displays
+ for (let i = 1; i < targets.length; i++) {
+ targets[i].textContent = targets[0].textContent;
+ }
+ const kycBadge = document.getElementById("kycBadge");
+ if (kycBadge && data.account.kyc_level != null) {
+ const lvl = data.account.kyc_level;
+ kycBadge.textContent = lvl >= 2 ? "KYC L2 " : (lvl >= 1 ? "KYC L1" : "Unverified");
+ }
+ }
+ }
+ });
+</script>
+
+</body>
+</html>

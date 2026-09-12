@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CX Sniper</title>
+  <link rel="stylesheet" href="./theme.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <script>window.CX_API_BASE = window.CX_API_BASE || localStorage.getItem("CX_API_BASE") || "";</script>
+  <script src="./cx-auth.js"></script>
+  <style>
+    body { height: 100vh; overflow: hidden; }
+    .cx-app { height: 100vh; gap: 10px; }
+    #chart {
+      flex: 1; min-height: 240px; border-radius: 16px;
+      border: 1px solid rgba(212,175,55,0.18); background: #101010;
+    }
+    .row-stats {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    }
+    .stat {
+      background: #141414; border: 1px solid rgba(212,175,55,0.14);
+      border-radius: 12px; padding: 10px 8px; text-align: center;
+    }
+    .stat .v { font-weight: 800; font-size: 15px; color: #f0d78c; direction: ltr; }
+    .stat .l { font-size: 10px; color: #8b8b8b; margin-top: 4px; letter-spacing: 0.06em; text-transform: uppercase; }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .lock-bar {
+      height: 4px; border-radius: 4px; background: rgba(255,255,255,0.06); overflow: hidden;
+    }
+    .lock-bar > i {
+      display: block; height: 100%; width: 0%;
+      background: linear-gradient(90deg, #d4af37, #f0d78c);
+      transition: width 0.1s linear;
+    }
+    .status { text-align: center; font-size: 12px; color: #9a9a9a; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <div class="cx-app">
+    <header class="cx-header">
+      <div class="cx-brand"><div class="cx-brand-mark">CX</div><div>Sniper</div></div>
+      <div class="cx-badge">TON <span id="userBalance" data-cx-balance>0.00</span></div>
+    </header>
+
+    <div class="row-stats">
+      <div class="stat"><div class="v" id="livePrice">—</div><div class="l">BTCUSDT</div></div>
+      <div class="stat"><div class="v" id="pnlSession">0.00</div><div class="l">Session PnL</div></div>
+      <div class="stat"><div class="v" id="winRate">—</div><div class="l">Win rate</div></div>
+    </div>
+
+    <div id="chart"></div>
+
+    <section class="cx-card" style="display:flex;flex-direction:column;gap:10px">
+      <div class="cx-label">Stake (TON) · payout 1.85x</div>
+      <div class="cx-amt-grid">
+        <button class="cx-amt active" onclick="setAmount(0.5, this)">0.5</button>
+        <button class="cx-amt" onclick="setAmount(1, this)">1</button>
+        <button class="cx-amt" onclick="setAmount(5, this)">5</button>
+        <button class="cx-amt" onclick="setAmount(10, this)">10</button>
+      </div>
+      <div class="lock-bar"><i id="lockFill"></i></div>
+      <div class="actions">
+        <button class="cx-btn cx-btn-down" id="btnDown" onclick="fire('down')">DOWN</button>
+        <button class="cx-btn cx-btn-up" id="btnUp" onclick="fire('up')">UP</button>
+      </div>
+      <div class="status" id="statusLine">Predict the next 3s move · real ledger balance</div>
+    </section>
+
+    <nav class="cx-footer-nav">
+      <button class="cx-nav-item" onclick="location.href='dashboard.html'">Home</button>
+      <button class="cx-nav-item" onclick="location.href='wallet.html'">Wallet</button>
+      <button class="cx-nav-item" onclick="location.href='binary.html'">Trade</button>
+      <button class="cx-nav-item active" onclick="location.href='app.html'">More</button>
+    </nav>
+  </div>
+
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#070707"); tg.setBackgroundColor("#070707"); } catch (e) {} }
+
+    let selectedAmount = 0.5;
+    let balance = 0;
+    let lastPrice = 0;
+    let busy = false;
+    let wins = 0, losses = 0, sessionPnl = 0;
+
+    function setAmount(a, btn) {
+      if (busy) return;
+      selectedAmount = a;
+      document.querySelectorAll(".cx-amt").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    }
+
+    function setBusy(v) {
+      busy = v;
+      document.getElementById("btnUp").disabled = v;
+      document.getElementById("btnDown").disabled = v;
+    }
+
+    function updateStats() {
+      document.getElementById("pnlSession").textContent = (sessionPnl >= 0 ? "+" : "") + sessionPnl.toFixed(2);
+      const total = wins + losses;
+      document.getElementById("winRate").textContent = total ? Math.round((wins / total) * 100) + "%" : "—";
+    }
+
+    const el = document.getElementById("chart");
+    const chart = LightweightCharts.createChart(el, {
+      layout: { background: { color: "#101010" }, textColor: "#8b8b8b" },
+      grid: {
+        vertLines: { color: "rgba(212,175,55,0.05)" },
+        horzLines: { color: "rgba(212,175,55,0.05)" },
+      },
+      timeScale: { timeVisible: true, secondsVisible: true, borderColor: "rgba(212,175,55,0.15)" },
+      rightPriceScale: { borderColor: "rgba(212,175,55,0.15)" },
+    });
+    const series = chart.addAreaSeries({
+      lineColor: "#d4af37",
+      topColor: "rgba(212,175,55,0.28)",
+      bottomColor: "rgba(212,175,55,0.02)",
+      lineWidth: 2,
+    });
+    new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth, height: el.clientHeight })).observe(el);
+
+    async function seedChart() {
+      try {
+        const raw = await (await fetch("https://api1.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=60")).json();
+        const pts = raw.map(k => ({ time: Math.floor(k[0] / 1000), value: Number(k[4]) }));
+        series.setData(pts);
+        lastPrice = pts[pts.length - 1].value;
+        document.getElementById("livePrice").textContent = lastPrice.toLocaleString("en-US", { maximumFractionDigits: 2 });
+      } catch (e) {
+        document.getElementById("statusLine").textContent = "Price feed unavailable";
+      }
+    }
+
+    async function pollPrice() {
+      try {
+        const j = await (await fetch("https://api1.binance.com/api/v3/ticker/price?symbol=BTCUSDT")).json();
+        const price = Number(j.price);
+        if (!price) return;
+        const tnow = Math.floor(Date.now() / 1000);
+        series.update({ time: tnow, value: price });
+        lastPrice = price;
+        document.getElementById("livePrice").textContent = price.toLocaleString("en-US", { maximumFractionDigits: 2 });
+      } catch (e) {}
+    }
+
+    async function fire(direction) {
+      if (busy) return;
+      if (!window.CXAuth || !CXAuth.getInitData()) {
+        document.getElementById("statusLine").textContent = "Open inside Telegram Mini App";
+        return;
+      }
+      if (balance < selectedAmount && !(window.CX_ACCOUNT && Number(window.CX_ACCOUNT.balance_ton) >= selectedAmount)) {
+        document.getElementById("statusLine").textContent = "Insufficient balance";
+        return;
+      }
+      setBusy(true);
+      document.getElementById("statusLine").textContent = "Locking " + direction.toUpperCase() + "…";
+      const fill = document.getElementById("lockFill");
+      fill.style.width = "0%";
+      try {
+        const openRes = await CXAuth.apiFetch("/api/sniper/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ direction, amount: selectedAmount, symbol: "BTCUSDT" }),
+        });
+        const round = openRes.round || {};
+        if (openRes.balance_ton != null) {
+          balance = Number(openRes.balance_ton);
+          const balEl = document.getElementById("userBalance");
+          balEl.textContent = balance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+          if (window.CX_ACCOUNT) window.CX_ACCOUNT.balance_ton = balance;
+        }
+        const windowSec = Number(round.tick_window_sec || 3);
+        const started = Date.now();
+        await new Promise(resolve => {
+          const iv = setInterval(() => {
+            const pct = Math.min(100, ((Date.now() - started) / (windowSec * 1000)) * 100);
+            fill.style.width = pct + "%";
+            if (pct >= 100) { clearInterval(iv); resolve(); }
+          }, 50);
+        });
+        // refresh market price then settle server-side (server uses its own price)
+        await pollPrice();
+        const settle = await CXAuth.apiFetch("/api/sniper/settle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ round_id: round.id }),
+        });
+        const won = !!settle.won;
+        const profit = Number(settle.profit || 0);
+        if (won) wins++; else losses++;
+        sessionPnl += profit;
+        updateStats();
+        document.getElementById("statusLine").textContent =
+          (won ? "WIN" : "LOSS") +
+          " · entry " + (settle.entry_price || "-") +
+          " · exit " + (settle.exit_price || "-") +
+          " · PnL " + (profit >= 0 ? "+" : "") + profit.toFixed(4);
+        // refresh balance
+        try {
+          const me = await CXAuth.apiFetch("/api/me");
+          if (me && me.account) {
+            balance = Number(me.account.balance_ton || 0);
+            document.getElementById("userBalance").textContent = balance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+            window.CX_ACCOUNT = me.account;
+          }
+        } catch (e) {}
+      } catch (e) {
+        document.getElementById("statusLine").textContent = "Error: " + (e.message || e);
+      } finally {
+        fill.style.width = "0%";
+        setBusy(false);
+      }
+    }
+
+    seedChart();
+    setInterval(pollPrice, 2000);
+    CXAuth.ready(async function () {
+      const data = await CXAuth.bindBalance(document.getElementById("userBalance"), "ton");
+      if (data && data.account) {
+        window.CX_ACCOUNT = data.account;
+        balance = Number(data.account.balance_ton || 0);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+ <title>سرمایه‌گذاری G10 - CX</title>
+<link rel="stylesheet" href="./theme.css">
+
+<style>
+  :root {
+    --bg-color: #0a0a0a !important;
+    --card-bg: #161616 !important;
+    --primary: #d4af37 !important;
+    --up-color: #3d9a6a !important;
+    --down-color: #c45c5c !important;
+    --text-main: #f5f5f5 !important;
+    --text-muted: #9a9a9a !important;
+  }
+  body { background: #0a0a0a !important; color: #f5f5f5 !important; }
+</style>
+
+ <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<script>
+ // Set your public API URL (HTTPS) before cx-auth.js runs in production:
+ // window.CX_API_BASE = "https://api.your-domain.com";
+ window.CX_API_BASE = window.CX_API_BASE || localStorage.getItem("CX_API_BASE") || "";
+</script>
+<script src="./cx-auth.js"></script>
+
+ <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+
+ <style>
+ :root {
+ --bg-base: #0a0e14; --bg-card: #121822; --text-main: #ffffff; --text-muted: #6b778c;
+ --neon-green: #23d777; --neon-cyan: #00e5ff; --neon-red: #ff4d6d; --border-light: rgba(255,255,255,0.05);
+ }
+ body {
+ font-family: 'Vazirmatn', sans-serif; background-color: var(--bg-base);
+ background-image: linear-gradient(var(--border-light) 1px, transparent 1px), linear-gradient(90deg, var(--border-light) 1px, transparent 1px);
+ background-size: 20px 20px; color: var(--text-main); margin: 0; padding: 15px; display: flex; flex-direction: column; overflow-x: hidden;
+ }
+
+ .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+ .header-title h2 { margin: 0; font-size: 20px; font-weight: 900; direction: ltr; text-align: left;}
+
+ .save-btn {
+ background: rgba(255, 77, 109, 0.1); border: 1px solid var(--neon-red); color: var(--neon-red);
+ padding: 6px 12px; border-radius: 8px; font-size: 12px; font-family: inherit; font-weight: bold; cursor: pointer;
+ }
+
+ .gauges-container { display: flex; flex-direction: column; align-items: center; margin-bottom: 30px; }
+ .gauge-main { position: relative; width: 140px; height: 140px; margin-bottom: 10px; }
+ .gauge-sub-container { display: flex; justify-content: space-between; width: 100%; padding: 0 20px; box-sizing: border-box; margin-top: -30px; }
+ .gauge-sub { position: relative; width: 100px; height: 100px; }
+ svg { transform: rotate(-90deg); width: 100%; height: 100%; }
+ circle { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.5s ease; }
+ .bg-circle { stroke: #1a2233; }
+ .progress-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: bold; font-size: 20px; }
+ .gauge-label { text-align: center; color: var(--text-muted); font-size: 12px; margin-top: 5px; }
+
+ .timer-container { display: flex; justify-content: center; align-items: center; gap: 5px; margin-bottom: 10px; direction: ltr;}
+ .timer-box { background-color: #151a24; border: 1px solid #232b3d; border-radius: 8px; width: 45px; height: 60px; display: flex; justify-content: center; align-items: center; font-size: 28px; font-weight: bold; color: white; }
+ .timer-colon { font-size: 24px; color: var(--neon-cyan); margin: 0 5px; font-weight: bold;}
+ .progress-line { width: 100%; height: 4px; background-color: #1a2233; border-radius: 2px; margin-bottom: 25px; overflow: hidden; }
+ .progress-line-fill { height: 100%; width: 100%; background-color: var(--neon-green); box-shadow: 0 0 10px var(--neon-green); transition: width 1s linear; }
+
+ .quick-amounts-title { font-size: 13px; color: var(--text-muted); text-align: right; margin-bottom: 10px;}
+ .quick-amounts { display: flex; gap: 10px; margin-bottom: 25px; }
+ .q-btn { flex: 1; background-color: transparent; border: 1px solid #232b3d; color: white; border-radius: 8px; padding: 10px 0; text-align: center; font-size: 13px; font-family: inherit; cursor: pointer; transition: 0.2s; }
+ .q-btn.active { border-color: var(--neon-cyan); background-color: rgba(0, 229, 255, 0.1); }
+
+ .input-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 10px; }
+ .input-box { display: flex; background-color: var(--bg-base); border: 1px solid #232b3d; border-radius: 12px; padding: 5px; align-items: center; margin-bottom: 20px; }
+ .input-box input { flex: 1; background: transparent; border: none; color: white; font-size: 16px; padding: 0 15px; outline: none; font-family: inherit; direction: ltr; }
+
+ .submit-btn {
+ background: linear-gradient(90deg, #18e5b8 0%, #00e5ff 100%); color: #000; border: none; width: 100%;
+ padding: 18px; border-radius: 12px; font-size: 18px; font-weight: 900; font-family: inherit; cursor: pointer;
+ box-shadow: 0 4px 15px rgba(0, 229, 255, 0.4); margin-bottom: 20px; transition: 0.3s;
+ }
+ .submit-btn:disabled { background: #232b3d; color: #6b778c; box-shadow: none; cursor: not-allowed; }
+
+ .modal-overlay {
+ position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(10, 14, 20, 0.9);
+ display: none; justify-content: center; align-items: center; z-index: 100; backdrop-filter: blur(5px);
+ }
+ .modal-box { background: var(--bg-card); border: 1px solid #232b3d; border-radius: 16px; padding: 30px 20px; text-align: center; width: 80%; max-width: 300px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); }
+ .modal-icon { font-size: 40px; margin-bottom: 15px; }
+ .modal-text { font-size: 16px; line-height: 1.6; margin-bottom: 25px; font-weight: bold; }
+ .modal-btn { background: var(--bg-base); border: 1px solid var(--neon-cyan); color: var(--text-main); width: 100%; padding: 12px; border-radius: 8px; font-family: inherit; font-size: 15px; cursor: pointer; }
+ </style>
+</head>
+<body>
+
+ <div class="header">
+ <div class="header-title"><h2 id="pageTitle">G10 - 95266</h2></div>
+ <button class="save-btn" onclick="saveAndExit()">ذخیره و خروج</button>
+ </div>
+
+ <div class="gauges-container">
+ <div class="gauge-main">
+ <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" class="bg-circle" /><circle id="gMainCircle" cx="50" cy="50" r="42" stroke="var(--neon-green)" stroke-dasharray="264" stroke-dashoffset="58" /></svg>
+ <div class="progress-text" id="gMainText">77.7%</div>
+ </div>
+ <div class="gauge-label" style="margin-top: -5px; margin-bottom: 20px;">سود هدف</div>
+ <div class="gauge-sub-container">
+ <div>
+ <div class="gauge-sub">
+ <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" class="bg-circle" /><circle id="gLossCircle" cx="50" cy="50" r="40" stroke="var(--neon-red)" stroke-dasharray="251" stroke-dashoffset="223" /></svg>
+ <div class="progress-text sub-text" id="gLossText">10.8%</div>
+ </div>
+ <div class="gauge-label">پوشش زیان</div>
+ </div>
+ <div>
+ <div class="gauge-sub">
+ <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" class="bg-circle" /><circle id="gWinCircle" cx="50" cy="50" r="40" stroke="var(--neon-cyan)" stroke-dasharray="251" stroke-dashoffset="100" /></svg>
+ <div class="progress-text sub-text" id="gWinText">59.8%</div>
+ </div>
+ <div class="gauge-label">نرخ برد</div>
+ </div>
+ </div>
+ </div>
+
+ <div class="timer-container">
+ <div class="timer-box" id="minTens">0</div><div class="timer-box" id="minOnes">0</div>
+ <div class="timer-colon">:</div>
+ <div class="timer-box" id="secTens">0</div><div class="timer-box" id="secOnes">0</div>
+ </div>
+ <div class="progress-line"><div class="progress-line-fill" id="progressFill"></div></div>
+
+ <div class="quick-amounts-title">مبالغ سریع</div>
+ <div class="quick-amounts">
+ <button class="q-btn" onclick="setAmount(10, this)">10.00<br><small>USDT</small></button>
+ <button class="q-btn" onclick="setAmount(50, this)">50.00<br><small>USDT</small></button>
+ <button class="q-btn" onclick="setAmount(100, this)">100.00<br><small>USDT</small></button>
+ </div>
+
+ <div class="input-header">
+ <span style="color: var(--text-muted);">موجودی: <span id="displayBalance" style="color: white; font-weight: bold;">0.00</span> USDT</span>
+ <span style="color: var(--text-muted);">سود جلسه: <span id="sessionNet" style="color: white; font-weight: bold;">0.00</span></span>
+ </div>
+
+ <div class="input-box">
+ <input type="number" id="investAmount" placeholder="مبلغ (USDT)">
+ </div>
+
+ <button class="submit-btn" id="mainBtn" onclick="queueTrade()">سرمایه‌گذاری</button>
+
+ <div class="modal-overlay" id="resultModal">
+ <div class="modal-box">
+ <div class="modal-icon" id="modalIcon"></div>
+ <div class="modal-text" id="modalText">نتیجه معامله</div>
+ <button class="modal-btn" onclick="continuePlaying()">تایید و ادامه</button>
+ </div>
+ </div>
+
+ <script>
+ let tg = window.Telegram.WebApp;
+ tg.expand();
+
+ const urlParams = new URLSearchParams(window.location.search);
+ const isPropMode = urlParams.get('mode') === 'prop';
+ let currentBalance = parseFloat(urlParams.get('balance')) || 0.00;
+
+ document.getElementById('displayBalance').innerText = currentBalance.toFixed(2);
+
+ if (isPropMode) {
+ document.getElementById('pageTitle').innerText = ' چالش پراپ CX';
+ }
+
+ let isTrading = false;
+ let queuedAmount = 0;
+ let sessionNetProfit = 0.00;
+
+ setInterval(() => {
+ let main = (70 + Math.random() * 15).toFixed(1);
+ let win = (50 + Math.random() * 20).toFixed(1);
+ let loss = (5 + Math.random() * 10).toFixed(1);
+
+ document.getElementById('gMainText').innerText = main + '%';
+ document.getElementById('gMainCircle').style.strokeDashoffset = 264 * (1 - main/100);
+ document.getElementById('gWinText').innerText = win + '%';
+ document.getElementById('gWinCircle').style.strokeDashoffset = 251 * (1 - win/100);
+ document.getElementById('gLossText').innerText = loss + '%';
+ document.getElementById('gLossCircle').style.strokeDashoffset = 251 * (1 - loss/100);
+ }, 2000);
+
+ function setAmount(val, btn) {
+ if(isTrading) return;
+ document.getElementById('investAmount').value = val;
+ document.querySelectorAll('.q-btn').forEach(b => b.classList.remove('active'));
+ btn.classList.add('active');
+ }
+
+ function updateGlobalTimer() {
+ let now = new Date();
+ let secondsLeft = 60 - now.getSeconds();
+ if(secondsLeft === 60) secondsLeft = 0;
+
+ let secStr = secondsLeft.toString().padStart(2, '0');
+ document.getElementById('minTens').innerText = "0";
+ document.getElementById('minOnes').innerText = "0";
+ document.getElementById('secTens').innerText = secStr[0];
+ document.getElementById('secOnes').innerText = secStr[1];
+
+ document.getElementById('progressFill').style.width = ((secondsLeft / 60) * 100) + "%";
+
+ if(secondsLeft === 0 && isTrading) {
+ isTrading = false;
+ processTradeResult();
+ }
+ }
+ setInterval(updateGlobalTimer, 1000);
+
+ function queueTrade() {
+ let amount = parseFloat(document.getElementById('investAmount').value);
+ let btn = document.getElementById('mainBtn');
+
+ if(!amount || amount <= 0) {
+ btn.style.background = "var(--neon-red)";
+ btn.innerText = "مبلغ نامعتبر!";
+ setTimeout(() => { btn.style.background = "linear-gradient(90deg, #18e5b8 0%, #00e5ff 100%)"; btn.innerText = "سرمایه‌گذاری"; }, 2000);
+ return;
+ }
+
+ if(amount > currentBalance) {
+ btn.style.background = "var(--neon-red)";
+ btn.innerText = " موجودی کافی نیست!";
+ setTimeout(() => { btn.style.background = "linear-gradient(90deg, #18e5b8 0%, #00e5ff 100%)"; btn.innerText = "سرمایه‌گذاری"; }, 2500);
+ return;
+ }
+
+ queuedAmount = amount;
+ isTrading = true;
+ btn.disabled = true;
+ btn.style.background = "#232b3d";
+ btn.innerText = "منتظر اتمام کندل...";
+ }
+
+ function processTradeResult() {
+ let isWin = Math.random() < 0.6;
+ let modal = document.getElementById('resultModal');
+ let mText = document.getElementById('modalText');
+ let mIcon = document.getElementById('modalIcon');
+
+ if(isWin) {
+ let profit = queuedAmount * 0.8;
+ sessionNetProfit += profit;
+ currentBalance += profit;
+ mIcon.innerHTML = "";
+ mText.innerHTML = `تبریک!<br>معامله با <span style="color:var(--neon-green)">سود</span> بسته شد.<br><br>سود شما: +${profit.toFixed(2)} USDT`;
+ } else {
+ sessionNetProfit -= queuedAmount;
+ currentBalance -= queuedAmount;
+ mIcon.innerHTML = "";
+ mText.innerHTML = `متاسفانه<br>معامله با <span style="color:var(--neon-red)">ضرر</span> بسته شد.<br><br>کسر شد: -${queuedAmount.toFixed(2)} USDT`;
+ }
+
+ document.getElementById('displayBalance').innerText = currentBalance.toFixed(2);
+ document.getElementById('sessionNet').innerText = (sessionNetProfit > 0 ? "+" : "") + sessionNetProfit.toFixed(2);
+ document.getElementById('sessionNet').style.color = sessionNetProfit >= 0 ? "var(--neon-green)" : "var(--neon-red)";
+ modal.style.display = "flex";
+ }
+
+ function continuePlaying() {
+ document.getElementById('resultModal').style.display = "none";
+ let btn = document.getElementById('mainBtn');
+ btn.disabled = false;
+ btn.style.background = "linear-gradient(90deg, #18e5b8 0%, #00e5ff 100%)";
+ btn.innerText = "سرمایه‌گذاری";
+ }
+
+ function saveAndExit() {
+ let actionType = isPropMode ? "sync_prop_session" : "sync_session";
+ let data = JSON.stringify({
+ action: actionType,
+ net_profit: sessionNetProfit
+ });
+ tg.sendData(data);
+ }
+ </script>
+
+<script>
+ CXAuth.ready(async function () {
+ // Prefer server balance; ignore forged ?bal= for display authority
+ const targets = [
+ document.getElementById("userBal"),
+ document.getElementById("balanceDisplay"),
+ document.getElementById("tonBalance"),
+ document.querySelector("[data-cx-balance]"),
+ ].filter(Boolean);
+ if (targets.length) {
+ const data = await CXAuth.bindBalance(targets[0], "ton");
+ if (data && data.account) {
+ window.CX_ACCOUNT = data.account;
+ window.CX_USER = data.user;
+ // sync other displays
+ for (let i = 1; i < targets.length; i++) {
+ targets[i].textContent = targets[0].textContent;
+ }
+ const kycBadge = document.getElementById("kycBadge");
+ if (kycBadge && data.account.kyc_level != null) {
+ const lvl = data.account.kyc_level;
+ kycBadge.textContent = lvl >= 2 ? "KYC L2 " : (lvl >= 1 ? "KYC L1" : "Unverified");
+ }
+ }
+ }
+ });
+</script>
+
+</body>
+</html>

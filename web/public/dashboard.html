@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CX Dashboard</title>
+  <link rel="stylesheet" href="./theme.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>window.CX_API_BASE = window.CX_API_BASE || localStorage.getItem("CX_API_BASE") || "";</script>
+  <script src="./cx-auth.js"></script>
+</head>
+<body>
+  <div class="cx-app">
+    <header class="cx-header">
+      <div class="cx-brand">
+        <div class="cx-brand-mark">CX</div>
+        <div>CX <span>Exchange</span></div>
+      </div>
+      <div class="cx-badge" id="kycBadge">Unverified</div>
+    </header>
+
+    <section class="cx-hero">
+      <div class="cx-hero-label">Total Balance</div>
+      <div class="cx-hero-value"><span id="userBalance" data-cx-balance>0.00</span><small>TON</small></div>
+      <div class="cx-hero-sub">
+        <span class="cx-chip">USDT <span id="usdtBalance">0.00</span></span>
+        <span class="cx-chip" id="userNameChip">Account</span>
+      </div>
+    </section>
+
+    <section class="cx-grid-4">
+      <button class="cx-action" onclick="location.href='wallet.html'"><div class="cx-action-ico">W</div><div class="cx-action-label">Wallet</div></button>
+      <button class="cx-action" onclick="location.href='binary.html'"><div class="cx-action-ico">B</div><div class="cx-action-label">Binary</div></button>
+      <button class="cx-action" onclick="location.href='swap.html'"><div class="cx-action-ico">S</div><div class="cx-action-label">Swap</div></button>
+      <button class="cx-action" onclick="location.href='app.html'"><div class="cx-action-ico">A</div><div class="cx-action-label">Apps</div></button>
+    </section>
+
+    <div class="cx-section-title"><span>Markets</span><span class="cx-live">LIVE</span></div>
+    <section class="cx-list">
+      <div class="cx-row"><div class="cx-row-left"><div class="cx-avatar">BTC</div><div><div class="cx-sym">BTC / USDT</div><div class="cx-name">Bitcoin</div></div></div><div class="cx-price-box"><div class="cx-price" id="pBTC">—</div><div class="cx-change up" id="cBTC">—</div></div></div>
+      <div class="cx-row"><div class="cx-row-left"><div class="cx-avatar">ETH</div><div><div class="cx-sym">ETH / USDT</div><div class="cx-name">Ethereum</div></div></div><div class="cx-price-box"><div class="cx-price" id="pETH">—</div><div class="cx-change up" id="cETH">—</div></div></div>
+      <div class="cx-row"><div class="cx-row-left"><div class="cx-avatar">TON</div><div><div class="cx-sym">TON / USDT</div><div class="cx-name">Toncoin</div></div></div><div class="cx-price-box"><div class="cx-price" id="pTON">—</div><div class="cx-change up" id="cTON">—</div></div></div>
+    </section>
+
+    <nav class="cx-footer-nav">
+      <button class="cx-nav-item active" onclick="location.href='dashboard.html'">Home</button>
+      <button class="cx-nav-item" onclick="location.href='wallet.html'">Wallet</button>
+      <button class="cx-nav-item" onclick="location.href='binary.html'">Trade</button>
+      <button class="cx-nav-item" onclick="location.href='app.html'">More</button>
+    </nav>
+  </div>
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#070707"); tg.setBackgroundColor("#070707"); } catch(e){} }
+    async function loadPrices() {
+      for (const p of [{id:"BTC",symbol:"BTCUSDT"},{id:"ETH",symbol:"ETHUSDT"},{id:"TON",symbol:"TONUSDT"}]) {
+        try {
+          const j = await (await fetch("https://api1.binance.com/api/v3/ticker/24hr?symbol="+p.symbol)).json();
+          const price = Number(j.lastPrice), ch = Number(j.priceChangePercent);
+          const el = document.getElementById("p"+p.id), ce = document.getElementById("c"+p.id);
+          if (el) el.textContent = price.toLocaleString("en-US",{maximumFractionDigits:2});
+          if (ce) { ce.textContent = (ch>=0?"+":"")+ch.toFixed(2)+"%"; ce.className = "cx-change "+(ch>=0?"up":"down"); }
+        } catch(e){}
+      }
+    }
+    loadPrices(); setInterval(loadPrices, 15000);
+    CXAuth.ready(async function () {
+      const data = await CXAuth.bindBalance(document.getElementById("userBalance"), "ton");
+      if (data && data.account) {
+        window.CX_ACCOUNT = data.account;
+        if (data.account.usdt_balance != null) document.getElementById("usdtBalance").textContent = Number(data.account.usdt_balance).toFixed(2);
+        const lvl = data.account.kyc_level || 0;
+        document.getElementById("kycBadge").textContent = lvl>=2?"KYC L2":lvl>=1?"KYC L1":"Unverified";
+      }
+      if (data && data.user) document.getElementById("userNameChip").textContent = data.user.username || data.user.first_name || "Account";
+    });
+  </script>
+</body>
+</html>
