@@ -20,7 +20,6 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY bot/ ./bot/
 
-VOLUME ["/app/data"]
 ENV DB_NAME=/app/data/cx_database.db
 
 CMD ["python", "-m", "bot.main"]
