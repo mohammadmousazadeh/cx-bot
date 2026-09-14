@@ -54,7 +54,7 @@ def _cors_headers(request: web.Request) -> dict:
             origin = allowed[0]
     return {
         "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data, Authorization",
+        "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data, Authorization, X-CX-Auth",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Max-Age": "86400",
     }
@@ -76,24 +76,41 @@ async def cors_middleware(request: web.Request, handler):
 
 def _authenticate(request: web.Request):
     raw = extract_init_data_from_headers(dict(request.headers))
-    if not raw:
-        raise web.HTTPUnauthorized(
-            text='{"error":"missing_init_data"}',
-            content_type="application/json",
-        )
-    try:
-        validated = validate_init_data(
-            raw,
-            settings.bot_token,
-            max_age_seconds=settings.webapp_init_max_age,
-        )
-    except InitDataError as exc:
-        logger.warning("initData rejected: %s", exc)
-        raise web.HTTPUnauthorized(
-            text='{"error":"invalid_init_data","detail":"%s"}' % exc,
-            content_type="application/json",
-        ) from exc
-    uid = int(validated.user.id)
+    if raw:
+        try:
+            validated = validate_init_data(
+                raw,
+                settings.bot_token,
+                max_age_seconds=settings.webapp_init_max_age,
+            )
+        except InitDataError as exc:
+            logger.warning("initData rejected: %s", exc)
+            raise web.HTTPUnauthorized(
+                text='{"error":"invalid_init_data","detail":"%s"}' % exc,
+                content_type="application/json",
+            ) from exc
+        uid = int(validated.user.id)
+    else:
+        # Fallback: signed token from bot keyboard URL (Iran/VPN initData issues)
+        from bot.services.webapp_token import verify_webapp_token
+        hdr = request.headers.get("X-CX-Auth") or ""
+        uid_s = exp_s = sig = ""
+        if hdr.startswith("v1:"):
+            parts = hdr.split(":")
+            if len(parts) >= 4:
+                uid_s, exp_s, sig = parts[1], parts[2], parts[3]
+        if not uid_s:
+            uid_s = request.rel_url.query.get("uid", "")
+            exp_s = request.rel_url.query.get("exp", "")
+            sig = request.rel_url.query.get("sig", "")
+        try:
+            validated = verify_webapp_token(int(uid_s), int(exp_s), sig, settings.bot_token)
+            uid = int(validated.user.id)
+        except Exception as exc:
+            raise web.HTTPUnauthorized(
+                text='{"error":"missing_init_data","detail":"%s"}' % exc,
+                content_type="application/json",
+            ) from exc
     if not rate_limit("api:%s" % uid, limit=60, window_sec=60):
         raise web.HTTPTooManyRequests(
             text='{"error":"rate_limited"}',
