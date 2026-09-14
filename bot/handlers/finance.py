@@ -88,7 +88,7 @@ async def process_stake_amount(message: Message, state: FSMContext) -> None:
         await state.clear()
         return await message.answer(
             t.get("cancelled", "Cancelled"),
-            reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id),
+            reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id),
         )
 
     try:
@@ -117,7 +117,7 @@ async def process_stake_amount(message: Message, state: FSMContext) -> None:
         t["stake_success"].format(amount, end.strftime("%Y-%m-%d")),
         reply_markup=get_main_dashboard_kb(
             lang, result.ton_balance, kyc, user_id == settings.admin_id
-        ),
+        , user_id=user_id),
         parse_mode="Markdown",
     )
     await state.clear()
@@ -144,7 +144,7 @@ async def cb_accept_loan(callback: CallbackQuery) -> None:
         t["loan_success"],
         reply_markup=get_main_dashboard_kb(
             lang, result.ton_balance, kyc, user_id == settings.admin_id
-        ),
+        , user_id=user_id),
     )
     await callback.answer()
 
@@ -229,7 +229,7 @@ async def cb_predict(callback: CallbackQuery) -> None:
             "Settlement failed — stake refunded.",
             reply_markup=get_main_dashboard_kb(
                 lang, result.ton_balance, kyc, user_id == settings.admin_id
-            ),
+            , user_id=user_id),
         )
         return
 
@@ -252,7 +252,7 @@ async def cb_predict(callback: CallbackQuery) -> None:
             t["predict_win"] + price_line,
             reply_markup=get_main_dashboard_kb(
                 lang, result.ton_balance, kyc, user_id == settings.admin_id
-            ),
+            , user_id=user_id),
             parse_mode="Markdown",
         )
     else:
@@ -261,7 +261,7 @@ async def cb_predict(callback: CallbackQuery) -> None:
             t["predict_loss"] + price_line,
             reply_markup=get_main_dashboard_kb(
                 lang, ton, kyc, user_id == settings.admin_id
-            ),
+            , user_id=user_id),
             parse_mode="Markdown",
         )
 
@@ -314,7 +314,7 @@ async def daily_bonus_handler(message: Message, state: FSMContext) -> None:
         t.get("spin_wheel_win", "🎰 You won `{0} TON`").format(reward),
         reply_markup=get_main_dashboard_kb(
             lang, result.ton_balance, kyc, user_id == settings.admin_id
-        ),
+        , user_id=user_id),
         parse_mode="Markdown",
     )
 
@@ -351,7 +351,7 @@ async def process_transfer_with_ledger(
         t.get("stake_success", "✅ Done").split(".")[0] + f"\nP2P `{amount:g}` TON → `{target_id}`",
         reply_markup=get_main_dashboard_kb(
             lang, sender_res.ton_balance, kyc, user_id == settings.admin_id
-        ),
+        , user_id=user_id),
         parse_mode="Markdown",
     )
     try:
@@ -450,7 +450,7 @@ async def cb_unlock_stake(callback: CallbackQuery) -> None:
         text,
         reply_markup=get_main_dashboard_kb(
             lang, result.ton_balance, kyc, user_id == settings.admin_id
-        ),
+        , user_id=user_id),
         parse_mode="Markdown",
     )
     await callback.answer("Unlocked")
@@ -479,7 +479,7 @@ async def cb_repay_loan(callback: CallbackQuery) -> None:
         f"✅ وام تسویه شد.\nموجودی: `{result.ton_balance:g} TON`",
         reply_markup=get_main_dashboard_kb(
             lang, result.ton_balance, kyc, user_id == settings.admin_id
-        ),
+        , user_id=user_id),
         parse_mode="Markdown",
     )
     await callback.answer("Repaid")
