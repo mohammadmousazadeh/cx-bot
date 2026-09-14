@@ -9,6 +9,7 @@ Endpoints:
 
 Auth: header  X-Telegram-Init-Data: <Telegram.WebApp.initData>
   or  Authorization: tma <initData>
+  or  X-CX-Auth: v1:uid:exp:sig  (signed token fallback)
 """
 from __future__ import annotations
 
@@ -93,6 +94,7 @@ def _authenticate(request: web.Request):
     else:
         # Fallback: signed token from bot keyboard URL (Iran/VPN initData issues)
         from bot.services.webapp_token import verify_webapp_token
+
         hdr = request.headers.get("X-CX-Auth") or ""
         uid_s = exp_s = sig = ""
         if hdr.startswith("v1:"):
@@ -128,6 +130,7 @@ def _authenticate(request: web.Request):
 
 async def health(_request: web.Request) -> web.Response:
     from bot.config import settings as _s
+
     return web.json_response({
         "ok": True,
         "service": "cx-api",
@@ -135,7 +138,6 @@ async def health(_request: web.Request) -> web.Response:
         "backup_enabled": getattr(_s, "backup_enabled", False),
         "database_url_set": bool(getattr(_s, "database_url", "")),
     })
-
 
 
 async def api_me(request: web.Request) -> web.Response:
@@ -162,6 +164,12 @@ async def api_me(request: web.Request) -> web.Response:
             "whitelist_address": row[8],
             "email": row[10],
         },
+        "deposit": {
+            "wallet": settings.payment_wallet or settings.exchange_wallet or "",
+            "memo": "cx_%s" % uid,
+            "min_ton": float(getattr(settings, "min_deposit_ton", 1.0) or 1.0),
+            "network": "TON",
+        },
         "auth_date": validated.auth_date,
     }
     return web.json_response(payload)
@@ -186,8 +194,6 @@ async def api_ping(request: web.Request) -> web.Response:
             "auth_date": validated.auth_date,
         }
     )
-
-
 
 
 async def api_binary_config(_request: web.Request) -> web.Response:
@@ -254,11 +260,8 @@ async def api_binary_history(request: web.Request) -> web.Response:
 async def api_binary_settle_due(request: web.Request) -> web.Response:
     """Internal/MVP endpoint: settle expired trades. Protect in production."""
     validated = _authenticate(request)
-    # For MVP any authenticated user can trigger global settle of due trades
-    # (settlement is server-side price based). Later restrict to admin/cron.
     results = await settle_due_trades(limit=50)
     return web.json_response({"ok": True, "settled": results, "by": validated.user.id})
-
 
 
 async def api_binary_klines(request: web.Request) -> web.Response:
@@ -309,7 +312,6 @@ async def api_sniper_settle(request: web.Request) -> web.Response:
         rid = int(body.get("round_id"))
     except Exception:
         raise web.HTTPBadRequest(text='{"error":"round_id_required"}', content_type="application/json")
-    # ownership check
     rows = await list_sniper_rounds(validated.user.id, limit=50)
     if not any(int(r["id"]) == rid for r in rows):
         raise web.HTTPForbidden(text='{"error":"not_your_round"}', content_type="application/json")
@@ -333,6 +335,7 @@ async def api_sniper_history(request: web.Request) -> web.Response:
         limit = 20
     rows = await list_sniper_rounds(validated.user.id, limit=limit)
     return web.json_response({"ok": True, "rounds": rows})
+
 
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
