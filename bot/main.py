@@ -87,6 +87,21 @@ async def on_startup_common(bot: Bot) -> None:
         settings.api_port,
         settings.webapp_base_url,
     )
+    # Official Menu Button Mini App (reliable initData)
+    if settings.webapp_base_url:
+        try:
+            from aiogram.types import MenuButtonWebApp, WebAppInfo
+
+            app_url = settings.webapp_base_url.rstrip("/") + "/app.html"
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="CX App",
+                    web_app=WebAppInfo(url=app_url),
+                )
+            )
+            logger.info("Chat menu button set → %s", app_url)
+        except Exception:
+            logger.exception("Failed to set chat menu button")
 
 
 async def run_polling() -> None:
@@ -164,19 +179,16 @@ async def run_webhook() -> None:
     dp.startup.register(_on_startup)
     dp.shutdown.register(_on_shutdown)
 
-    # Base app = Mini App API routes + CORS
     if settings.api_enabled:
         app = create_api_app()
     else:
         app = web.Application()
 
-    # Mount aiogram webhook handler
     SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
         secret_token=settings.webhook_secret or None,
     ).register(app, path=settings.webhook_path)
-
     setup_application(app, dp, bot=bot)
 
     runner = web.AppRunner(app)
@@ -197,7 +209,6 @@ async def run_webhook() -> None:
     if settings.backup_enabled:
         start_backup_worker()
 
-    # Run forever
     stop = asyncio.Event()
     try:
         await stop.wait()
