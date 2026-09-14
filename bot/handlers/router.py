@@ -59,7 +59,7 @@ from bot.handlers.finance import (
     cb_unlock_stake,
     cb_repay_loan,
 )
-from bot.keyboards import get_cancel_kb, get_main_dashboard_kb
+from bot.keyboards import get_cancel_kb, get_main_dashboard_kb, get_miniapp_inline_kb
 from bot.services.market import get_market_price
 from bot.services.pnl_card import generate_pnl_card
 from bot.services.ton_pay import check_ton_transaction, generate_ton_payment
@@ -140,7 +140,7 @@ async def start_cmd(message: Message, state: FSMContext):
             await db.execute('UPDATE users SET kyc_level = 2 WHERE user_id = ?', (user_id,))
             await db.commit()
             user_data = await get_user_data(user_id)
-            return await message.answer(t["dashboard_ready"], reply_markup=get_main_dashboard_kb(lang, user_data[4], user_data[1], True))
+            return await message.answer(t["dashboard_ready"], reply_markup=get_main_dashboard_kb(lang, user_data[4], user_data[1], True, user_id=user_id))
 
         if kyc == 0:
             kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t["btn_send_phone"], request_contact=True)]], resize_keyboard=True)
@@ -148,7 +148,7 @@ async def start_cmd(message: Message, state: FSMContext):
 
     t = TEXTS.get(lang, TEXTS["fa"])
     user_data = await get_user_data(user_id)
-    await message.answer(t["dashboard_ready"], reply_markup=get_main_dashboard_kb(lang, user_data[4], user_data[1], user_id == settings.admin_id))
+    await message.answer(t["dashboard_ready"], reply_markup=get_main_dashboard_kb(lang, user_data[4], user_data[1], user_id == settings.admin_id, user_id=user_id))
 
 @router.callback_query(F.data.startswith("setlang_"), StateFilter("*"))
 async def cb_set_language(callback: CallbackQuery, state: FSMContext):
@@ -169,7 +169,7 @@ async def cb_set_language(callback: CallbackQuery, state: FSMContext):
         return await callback.message.answer(t["mandatory_phone_msg"], reply_markup=kb, parse_mode="Markdown")
         
     user_data = await get_user_data(user_id)
-    await callback.message.answer(t["dashboard_ready"], reply_markup=get_main_dashboard_kb(lang, user_data[4], user_data[1], user_id == settings.admin_id))
+    await callback.message.answer(t["dashboard_ready"], reply_markup=get_main_dashboard_kb(lang, user_data[4], user_data[1], user_id == settings.admin_id, user_id=user_id))
 
 @router.message(F.contact, StateFilter("*"))
 async def phone_contact_handler(message: Message, state: FSMContext):
@@ -198,7 +198,7 @@ async def cb_skip_kyc(callback: CallbackQuery, state: FSMContext):
     user_data = await get_user_data(callback.from_user.id)
     lang, balance, kyc = user_data[0], user_data[4], user_data[1]
     await callback.message.delete()
-    await callback.message.answer(TEXTS[lang]["dashboard_ready"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, callback.from_user.id == settings.admin_id))
+    await callback.message.answer(TEXTS[lang]["dashboard_ready"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, callback.from_user.id == settings.admin_id, user_id=callback.from_user.id))
 
 @router.callback_query(F.data == "start_kyc_flow", StateFilter("*"))
 async def cb_start_kyc_flow(callback: CallbackQuery, state: FSMContext):
@@ -216,7 +216,7 @@ async def process_kyc_email(message: Message, state: FSMContext):
     
     if message.text in [TEXTS["fa"]["btn_cancel"], TEXTS["en"]["btn_cancel"]]:
         await state.clear()
-        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, message.from_user.id == settings.admin_id))
+        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, message.from_user.id == settings.admin_id, user_id=message.from_user.id))
 
     email = message.text.strip().lower()
     if await is_disposable_email(email):
@@ -239,7 +239,7 @@ async def process_kyc_photo(message: Message, state: FSMContext):
         await db.execute("UPDATE users SET email = ? WHERE user_id = ?", (email, user_id))
         await db.commit()
 
-    await message.answer(t["kyc_pending_new"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id))
+    await message.answer(t["kyc_pending_new"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id))
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ تأیید احراز", callback_data=f"adm_kyc_accept_{user_id}"),
@@ -391,7 +391,7 @@ async def web_app_data_handler(message: Message, state: FSMContext):
                 f"🔹 Price: `{rate:,.4f}`\n"
                 f"💵 Credited: `{received_usdt:,.2f} USDT`"
             )
-            await message.answer(receipt, reply_markup=get_main_dashboard_kb(lang, new_balance, kyc, user_id == settings.admin_id), parse_mode="Markdown")
+            await message.answer(receipt, reply_markup=get_main_dashboard_kb(lang, new_balance, kyc, user_id == settings.admin_id, user_id=user_id), parse_mode="Markdown")
         except Exception:
             await message.answer("❌ خطا در پردازش سواپ.")
 
@@ -596,7 +596,7 @@ async def process_support_msg(message: Message, state: FSMContext):
     
     if message.text in [TEXTS["fa"]["btn_cancel"], TEXTS["en"]["btn_cancel"]]:
         await state.clear()
-        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id))
+        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id))
         
     async with aiosqlite.connect(settings.db_name) as db:
         c = await db.execute("INSERT INTO support_tickets (user_id, message) VALUES (?, ?)", (user_id, message.text))
@@ -609,7 +609,7 @@ async def process_support_msg(message: Message, state: FSMContext):
     except Exception:
         pass
         
-    await message.answer(t["support_sent"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id))
+    await message.answer(t["support_sent"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id))
     await state.clear()
 
 @router.callback_query(F.data.startswith("reply_ticket_"), StateFilter("*"))
@@ -669,7 +669,7 @@ async def process_pin_setup(message: Message, state: FSMContext):
     
     if message.text in [TEXTS["fa"]["btn_cancel"], TEXTS["en"]["btn_cancel"]]:
         await state.clear()
-        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id))
+        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id))
         
     pin = message.text.strip()
     if not (pin.isdigit() and len(pin) == 4):
@@ -681,7 +681,7 @@ async def process_pin_setup(message: Message, state: FSMContext):
         await db.commit()
         
     await log_security_event(user_id, "Security PIN Changed")
-    await message.answer(t["pin_saved"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id))
+    await message.answer(t["pin_saved"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id))
     await state.clear()
 
 @router.callback_query(F.data == "setup_whitelist", StateFilter("*"))
@@ -700,7 +700,7 @@ async def process_whitelist(message: Message, state: FSMContext):
     
     if message.text in [TEXTS["fa"]["btn_cancel"], TEXTS["en"]["btn_cancel"]]:
         await state.clear()
-        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id))
+        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id))
         
     addr = message.text.strip()
     cooldown = datetime.now() + timedelta(hours=24)
@@ -709,7 +709,7 @@ async def process_whitelist(message: Message, state: FSMContext):
         await db.commit()
         
     await log_security_event(user_id, "Whitelist Address Updated")
-    await message.answer(t["whitelist_saved"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id))
+    await message.answer(t["whitelist_saved"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id))
     await state.clear()
 
 @router.message(F.text.in_([TEXTS["fa"]["btn_admin_panel"], TEXTS["en"]["btn_admin_panel"]]), StateFilter("*"))
@@ -799,7 +799,7 @@ async def process_transfer_userid(message: Message, state: FSMContext):
     t = TEXTS[lang]
     if message.text in [TEXTS["fa"]["btn_cancel"], TEXTS["en"]["btn_cancel"]]:
         await state.clear()
-        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, message.from_user.id == settings.admin_id))
+        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, message.from_user.id == settings.admin_id, user_id=message.from_user.id))
     try:
         target_id = int(message.text.strip())
         if target_id == message.from_user.id: return await message.answer(t["transfer_err_self"])
@@ -820,7 +820,7 @@ async def process_transfer_amount(message: Message, state: FSMContext):
     t = TEXTS[lang]
     if message.text in [TEXTS["fa"]["btn_cancel"], TEXTS["en"]["btn_cancel"]]:
         await state.clear()
-        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id))
+        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id))
     try:
         amount = float(message.text)
         if amount <= 0: return await message.answer(t["stake_invalid"])
@@ -835,7 +835,7 @@ async def process_transfer_amount(message: Message, state: FSMContext):
         await log_security_event(user_id, f"P2P {amount} -> {target_id}")
         await message.answer(
             f"✅ انتقال `{amount:g} TON` به کاربر `{target_id}` انجام شد.",
-            reply_markup=get_main_dashboard_kb(lang, sender_res.ton_balance, kyc, user_id == settings.admin_id),
+            reply_markup=get_main_dashboard_kb(lang, sender_res.ton_balance, kyc, user_id == settings.admin_id, user_id=user_id),
             parse_mode="Markdown",
         )
         try:
@@ -858,7 +858,7 @@ async def process_with_addr(message: Message, state: FSMContext):
     
     if message.text in [TEXTS["fa"]["btn_cancel"], TEXTS["en"]["btn_cancel"]]:
         await state.clear()
-        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, message.from_user.id == settings.admin_id))
+        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, message.from_user.id == settings.admin_id, user_id=message.from_user.id))
         
     addr = message.text.strip()
     if wl and addr != wl:
@@ -876,7 +876,7 @@ async def process_with_amount(message: Message, state: FSMContext):
     
     if message.text in [TEXTS["fa"]["btn_cancel"], TEXTS["en"]["btn_cancel"]]:
         await state.clear()
-        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, message.from_user.id == settings.admin_id))
+        return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, message.from_user.id == settings.admin_id, user_id=message.from_user.id))
         
     try:
         amount = float(message.text)
@@ -918,7 +918,7 @@ async def process_with_pin(message: Message, state: FSMContext):
         await log_security_event(user_id, "Auto withdraw completed: %s TON tx=%s" % (amount, txh))
         await message.answer(
             "%s\nTX: `%s`" % (t.get("req_submitted") or "Submitted", txh),
-            reply_markup=get_main_dashboard_kb(lang, new_balance, kyc, user_id == settings.admin_id),
+            reply_markup=get_main_dashboard_kb(lang, new_balance, kyc, user_id == settings.admin_id, user_id=user_id),
             parse_mode="Markdown",
         )
         try:
@@ -947,7 +947,7 @@ async def process_with_pin(message: Message, state: FSMContext):
     await log_security_event(user_id, "Withdrawal Requested: %s TON" % amount)
     await message.answer(
         t["req_submitted"],
-        reply_markup=get_main_dashboard_kb(lang, new_balance, kyc, user_id == settings.admin_id),
+        reply_markup=get_main_dashboard_kb(lang, new_balance, kyc, user_id == settings.admin_id, user_id=user_id),
     )
     await state.clear()
 
@@ -1042,6 +1042,6 @@ async def cb_prop_start(callback: CallbackQuery):
             result.ton_balance,
         ),
         parse_mode="Markdown",
-        reply_markup=get_main_dashboard_kb(lang, result.ton_balance, kyc, user_id == settings.admin_id),
+        reply_markup=get_main_dashboard_kb(lang, result.ton_balance, kyc, user_id == settings.admin_id, user_id=user_id),
     )
     await callback.answer("OK")
