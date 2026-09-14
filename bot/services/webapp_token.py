@@ -22,7 +22,6 @@ class ValidatedToken:
 
 
 def make_webapp_token(user_id: int, bot_token: str, ttl_sec: int = 86400) -> tuple[int, str]:
-    """Return (exp, sig) for query string auth."""
     exp = int(time.time()) + max(60, ttl_sec)
     msg = f"{user_id}:{exp}".encode("utf-8")
     sig = hmac.new(bot_token.encode("utf-8"), msg, hashlib.sha256).hexdigest()[:40]
@@ -45,7 +44,6 @@ def verify_webapp_token(
     msg = f"{user_id}:{exp}".encode("utf-8")
     expected = hmac.new(bot_token.encode("utf-8"), msg, hashlib.sha256).hexdigest()[:40]
     if not hmac.compare_digest(expected, (sig or "").strip().lower()):
-        # allow uppercase hex from clients
         if not hmac.compare_digest(expected, (sig or "").strip()):
             raise ValueError("invalid signature")
     return ValidatedToken(user=TokenUser(id=int(user_id)), auth_date=now)
