@@ -725,10 +725,23 @@ async def start_prop_challenge(
     *,
     plan_size: float,
     fee: float,
+    profit_share: float = 0.8,
 ) -> tuple[LedgerResult, float]:
-    """Charge fee from TON balance and open/reset a prop account with virtual balance."""
+    """Charge fee from real TON and open/reset prop virtual account."""
     if fee <= 0 or plan_size <= 0:
         raise InvalidAmount("invalid prop plan")
+    if profit_share <= 0 or profit_share > 1:
+        profit_share = 0.8
+
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT status FROM prop_accounts WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        if row and str(row["status"] or "") == "active":
+            raise BusinessRuleError("prop_already_active")
+
     result = await debit_ton(
         user_id,
         fee,
@@ -739,14 +752,23 @@ async def start_prop_challenge(
     async with get_db() as db:
         await db.execute(
             """
-            INSERT INTO prop_accounts (user_id, plan_size, virtual_balance, status)
-            VALUES (?, ?, ?, 'active')
+            INSERT INTO prop_accounts (
+                user_id, plan_size, virtual_balance, status,
+                fee_paid, peak_balance, trades_count, profit_share,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, 'active', ?, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
                 plan_size = excluded.plan_size,
                 virtual_balance = excluded.virtual_balance,
-                status = 'active'
+                status = 'active',
+                fee_paid = excluded.fee_paid,
+                peak_balance = excluded.peak_balance,
+                trades_count = 0,
+                profit_share = excluded.profit_share,
+                created_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
             """,
-            (user_id, plan_size, plan_size),
+            (user_id, plan_size, plan_size, fee, plan_size, profit_share),
         )
         await db.commit()
     return result, plan_size
@@ -755,11 +777,30 @@ async def start_prop_challenge(
 async def get_prop_account(user_id: int) -> dict | None:
     async with get_db() as db:
         cur = await db.execute(
-            "SELECT user_id, plan_size, virtual_balance, status FROM prop_accounts WHERE user_id = ?",
+            """
+            SELECT user_id, plan_size, virtual_balance, status,
+                   fee_paid, peak_balance, trades_count, profit_share,
+                   created_at, updated_at
+            FROM prop_accounts WHERE user_id = ?
+            """,
             (user_id,),
         )
         row = await cur.fetchone()
         return dict(row) if row else None
+
+
+async def list_prop_trades(user_id: int, *, limit: int = 20) -> list[dict]:
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT id, direction, amount, entry_price, exit_price, profit, won,
+                   virtual_balance, status_after, created_at
+            FROM prop_trades WHERE user_id = ?
+            ORDER BY id DESC LIMIT ?
+            """,
+            (user_id, limit),
+        )
+        return [dict(r) for r in await cur.fetchall()]
 
 
 async def prop_virtual_trade(
@@ -768,9 +809,11 @@ async def prop_virtual_trade(
     direction: str,
     amount: float,
     won: bool,
+    entry_price: float | None = None,
+    exit_price: float | None = None,
     payout_rate: float = 1.8,
 ) -> dict:
-    """Apply a virtual prop trade result to prop_accounts.virtual_balance only."""
+    """Apply virtual prop trade; enforce target / max drawdown."""
     direction = (direction or "").strip().lower()
     if direction not in ("up", "down"):
         raise BusinessRuleError("invalid_direction")
@@ -778,13 +821,16 @@ async def prop_virtual_trade(
         amount = float(amount)
     except (TypeError, ValueError) as exc:
         raise InvalidAmount("invalid_amount") from exc
-    if amount <= 0:
-        raise InvalidAmount("amount must be positive")
+    if amount < 50:
+        raise InvalidAmount("min_virtual_stake_50")
 
     async with get_db() as db:
         await db.execute("BEGIN IMMEDIATE")
         cur = await db.execute(
-            "SELECT plan_size, virtual_balance, status FROM prop_accounts WHERE user_id = ?",
+            """
+            SELECT plan_size, virtual_balance, status, peak_balance, trades_count, profit_share
+            FROM prop_accounts WHERE user_id = ?
+            """,
             (user_id,),
         )
         row = await cur.fetchone()
@@ -794,11 +840,21 @@ async def prop_virtual_trade(
         if row["status"] != "active":
             await db.execute("ROLLBACK")
             raise BusinessRuleError("prop_not_active")
+
         plan = float(row["plan_size"] or 0)
         bal = float(row["virtual_balance"] or 0)
+        peak = float(row["peak_balance"] or plan or bal)
+        trades = int(row["trades_count"] or 0)
+        share = float(row["profit_share"] or 0.8)
+
         if amount > bal:
             await db.execute("ROLLBACK")
             raise InsufficientBalance("insufficient_virtual_balance")
+        # risk limit: max 10% of current virtual equity per trade
+        max_stake = max(50.0, round(bal * 0.10, 8))
+        if amount > max_stake:
+            await db.execute("ROLLBACK")
+            raise BusinessRuleError("max_stake_10pct")
 
         if won:
             profit = round(amount * (payout_rate - 1.0), 8)
@@ -807,18 +863,37 @@ async def prop_virtual_trade(
             profit = -amount
             new_bal = round(bal - amount, 8)
 
-        status = "active"
-        # 10% max drawdown from plan size
+        if new_bal > peak:
+            peak = new_bal
+
         dd_floor = plan * 0.90
         target = plan * 1.10
+        status = "active"
         if new_bal < dd_floor:
             status = "failed"
         elif new_bal >= target:
             status = "passed"
 
         await db.execute(
-            "UPDATE prop_accounts SET virtual_balance = ?, status = ? WHERE user_id = ?",
-            (new_bal, status, user_id),
+            """
+            UPDATE prop_accounts
+            SET virtual_balance = ?, status = ?, peak_balance = ?,
+                trades_count = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (new_bal, status, peak, trades + 1, user_id),
+        )
+        await db.execute(
+            """
+            INSERT INTO prop_trades (
+                user_id, direction, amount, entry_price, exit_price,
+                profit, won, virtual_balance, status_after
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id, direction, amount, entry_price, exit_price,
+                profit, 1 if won else 0, new_bal, status,
+            ),
         )
         await db.commit()
         return {
@@ -829,4 +904,72 @@ async def prop_virtual_trade(
             "won": won,
             "dd_floor": dd_floor,
             "target": target,
+            "peak_balance": peak,
+            "trades_count": trades + 1,
+            "profit_share": share,
+            "claimable": round(max(0.0, (new_bal - plan) * share), 8) if status == "passed" else 0.0,
         }
+
+
+async def claim_prop_reward(user_id: int) -> dict:
+    """Pay profit share to real TON balance when challenge PASSED."""
+    async with get_db() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute(
+            """
+            SELECT plan_size, virtual_balance, status, profit_share, fee_paid
+            FROM prop_accounts WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            await db.execute("ROLLBACK")
+            raise BusinessRuleError("no_prop_account")
+        if row["status"] == "paid":
+            await db.execute("ROLLBACK")
+            raise BusinessRuleError("already_claimed")
+        if row["status"] != "passed":
+            await db.execute("ROLLBACK")
+            raise BusinessRuleError("challenge_not_passed")
+
+        plan = float(row["plan_size"] or 0)
+        bal = float(row["virtual_balance"] or 0)
+        share = float(row["profit_share"] or 0.8)
+        gross = max(0.0, bal - plan)
+        reward = round(gross * share, 8)
+        if reward <= 0:
+            await db.execute("ROLLBACK")
+            raise BusinessRuleError("no_profit_to_claim")
+
+        await db.execute(
+            """
+            UPDATE prop_accounts
+            SET status = 'paid', updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND status = 'passed'
+            """,
+            (user_id,),
+        )
+        await db.commit()
+
+    result = await credit_ton(
+        user_id,
+        reward,
+        kind=TxKind.PROP_REWARD,
+        meta={
+            "plan_size": plan,
+            "virtual_balance": bal,
+            "gross_profit": gross,
+            "profit_share": share,
+            "reward": reward,
+        },
+        idempotency_key=f"prop_reward:{user_id}:{plan}:{int(bal)}",
+    )
+    return {
+        "reward": reward,
+        "gross_profit": gross,
+        "profit_share": share,
+        "plan_size": plan,
+        "status": "paid",
+        "balance_ton": result.ton_balance,
+    }
