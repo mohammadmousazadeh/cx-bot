@@ -9,7 +9,6 @@ Endpoints:
 
 Auth: header  X-Telegram-Init-Data: <Telegram.WebApp.initData>
   or  Authorization: tma <initData>
-  or  X-CX-Auth: v1:uid:exp:sig  (signed token fallback)
 """
 from __future__ import annotations
 
@@ -35,7 +34,7 @@ from bot.services.sniper import (
     settle_sniper_round,
     list_sniper_rounds,
 )
-from bot.db.ledger import BusinessRuleError, InsufficientBalance, InvalidAmount
+from bot.db.ledger import BusinessRuleError, InsufficientBalance, InvalidAmount, swap_ton_to_usdt
 from bot.security import rate_limit, require_not_frozen, sanitize_amount
 from bot.services.telegram_auth import (
     InitDataError,
@@ -94,7 +93,6 @@ def _authenticate(request: web.Request):
     else:
         # Fallback: signed token from bot keyboard URL (Iran/VPN initData issues)
         from bot.services.webapp_token import verify_webapp_token
-
         hdr = request.headers.get("X-CX-Auth") or ""
         uid_s = exp_s = sig = ""
         if hdr.startswith("v1:"):
@@ -130,7 +128,6 @@ def _authenticate(request: web.Request):
 
 async def health(_request: web.Request) -> web.Response:
     from bot.config import settings as _s
-
     return web.json_response({
         "ok": True,
         "service": "cx-api",
@@ -138,6 +135,7 @@ async def health(_request: web.Request) -> web.Response:
         "backup_enabled": getattr(_s, "backup_enabled", False),
         "database_url_set": bool(getattr(_s, "database_url", "")),
     })
+
 
 
 async def api_me(request: web.Request) -> web.Response:
@@ -194,6 +192,8 @@ async def api_ping(request: web.Request) -> web.Response:
             "auth_date": validated.auth_date,
         }
     )
+
+
 
 
 async def api_binary_config(_request: web.Request) -> web.Response:
@@ -260,8 +260,11 @@ async def api_binary_history(request: web.Request) -> web.Response:
 async def api_binary_settle_due(request: web.Request) -> web.Response:
     """Internal/MVP endpoint: settle expired trades. Protect in production."""
     validated = _authenticate(request)
+    # For MVP any authenticated user can trigger global settle of due trades
+    # (settlement is server-side price based). Later restrict to admin/cron.
     results = await settle_due_trades(limit=50)
     return web.json_response({"ok": True, "settled": results, "by": validated.user.id})
+
 
 
 async def api_binary_klines(request: web.Request) -> web.Response:
@@ -274,6 +277,81 @@ async def api_binary_klines(request: web.Request) -> web.Response:
     candles = await get_klines(symbol, interval=interval, limit=limit)
     return web.json_response({"ok": True, "symbol": symbol, "interval": interval, "candles": candles})
 
+
+
+async def api_swap_quote(request: web.Request) -> web.Response:
+    """Public-ish quote; still requires auth to avoid abuse."""
+    _authenticate(request)
+    symbol = (request.query.get("symbol") or "TONUSDT").upper()
+    price = await get_market_price(symbol)
+    if not price:
+        raise web.HTTPServiceUnavailable(
+            text='{"error":"price_unavailable"}', content_type="application/json"
+        )
+    fee_bps = 30  # 0.30%
+    return web.json_response({
+        "ok": True,
+        "symbol": symbol,
+        "rate": price,
+        "fee_bps": fee_bps,
+        "min_ton": 0.5,
+        "max_ton": 500.0,
+    })
+
+
+async def api_swap_ton_usdt(request: web.Request) -> web.Response:
+    """Execute TON -> USDT internal ledger swap at live rate minus fee."""
+    validated = _authenticate(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    try:
+        ton_amount = float(body.get("amount", 0))
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_amount"}', content_type="application/json")
+    if ton_amount < 0.5:
+        raise web.HTTPBadRequest(text='{"error":"min_amount_0.5"}', content_type="application/json")
+    if ton_amount > 500:
+        raise web.HTTPBadRequest(text='{"error":"max_amount_500"}', content_type="application/json")
+
+    rate = await get_market_price("TONUSDT")
+    if not rate or rate <= 0:
+        raise web.HTTPServiceUnavailable(
+            text='{"error":"price_unavailable"}', content_type="application/json"
+        )
+    fee_bps = 30
+    fee_ton = round(ton_amount * fee_bps / 10000.0, 8)
+    net_ton = round(ton_amount - fee_ton, 8)
+    if net_ton <= 0:
+        raise web.HTTPBadRequest(text='{"error":"amount_too_small"}', content_type="application/json")
+    usdt_amount = round(net_ton * rate, 6)
+    try:
+        result = await swap_ton_to_usdt(
+            validated.user.id,
+            ton_amount,
+            usdt_amount,
+            rate=rate,
+            fee_ton=fee_ton,
+        )
+        return web.json_response({
+            "ok": True,
+            "ton_spent": ton_amount,
+            "fee_ton": fee_ton,
+            "usdt_received": usdt_amount,
+            "rate": rate,
+            "balance_ton": result.ton_balance,
+            "balance_usdt": result.usdt_balance,
+        })
+    except InsufficientBalance:
+        raise web.HTTPPaymentRequired(
+            text='{"error":"insufficient_balance"}', content_type="application/json"
+        )
+    except (InvalidAmount, BusinessRuleError) as exc:
+        raise web.HTTPBadRequest(text='{"error":"%s"}' % exc, content_type="application/json")
+    except Exception:
+        logger.exception("swap failed")
+        raise web.HTTPInternalServerError(text='{"error":"server_error"}', content_type="application/json")
 
 async def api_sniper_config(_request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "config": sniper_get_config()})
@@ -312,6 +390,7 @@ async def api_sniper_settle(request: web.Request) -> web.Response:
         rid = int(body.get("round_id"))
     except Exception:
         raise web.HTTPBadRequest(text='{"error":"round_id_required"}', content_type="application/json")
+    # ownership check
     rows = await list_sniper_rounds(validated.user.id, limit=50)
     if not any(int(r["id"]) == rid for r in rows):
         raise web.HTTPForbidden(text='{"error":"not_your_round"}', content_type="application/json")
@@ -336,7 +415,6 @@ async def api_sniper_history(request: web.Request) -> web.Response:
     rows = await list_sniper_rounds(validated.user.id, limit=limit)
     return web.json_response({"ok": True, "rounds": rows})
 
-
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     app.router.add_get("/api/health", health)
@@ -349,6 +427,8 @@ def create_api_app() -> web.Application:
     app.router.add_post("/api/binary/open", api_binary_open)
     app.router.add_get("/api/binary/history", api_binary_history)
     app.router.add_post("/api/binary/settle-due", api_binary_settle_due)
+    app.router.add_get("/api/swap/quote", api_swap_quote)
+    app.router.add_post("/api/swap/ton-usdt", api_swap_ton_usdt)
     app.router.add_get("/api/sniper/config", api_sniper_config)
     app.router.add_post("/api/sniper/open", api_sniper_open)
     app.router.add_post("/api/sniper/settle", api_sniper_settle)
