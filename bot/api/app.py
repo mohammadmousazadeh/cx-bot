@@ -34,7 +34,10 @@ from bot.services.sniper import (
     settle_sniper_round,
     list_sniper_rounds,
 )
-from bot.db.ledger import BusinessRuleError, InsufficientBalance, InvalidAmount, swap_ton_to_usdt
+from bot.db.ledger import (
+    BusinessRuleError, InsufficientBalance, InvalidAmount, swap_ton_to_usdt,
+    start_prop_challenge, get_prop_account, prop_virtual_trade,
+)
 from bot.security import rate_limit, require_not_frozen, sanitize_amount
 from bot.services.telegram_auth import (
     InitDataError,
@@ -415,6 +418,109 @@ async def api_sniper_history(request: web.Request) -> web.Response:
     rows = await list_sniper_rounds(validated.user.id, limit=limit)
     return web.json_response({"ok": True, "rounds": rows})
 
+
+async def api_prop_status(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    acc = await get_prop_account(validated.user.id)
+    plans = [
+        {"id": "10k", "plan_size": 10000.0, "fee": 50.0, "target_pct": 10, "max_dd_pct": 10},
+        {"id": "50k", "plan_size": 50000.0, "fee": 200.0, "target_pct": 10, "max_dd_pct": 10},
+    ]
+    if not acc:
+        return web.json_response({"ok": True, "account": None, "plans": plans})
+    plan = float(acc.get("plan_size") or 0)
+    bal = float(acc.get("virtual_balance") or 0)
+    return web.json_response({
+        "ok": True,
+        "account": {
+            "plan_size": plan,
+            "virtual_balance": bal,
+            "status": acc.get("status") or "active",
+            "target": plan * 1.10,
+            "dd_floor": plan * 0.90,
+            "progress_pct": round(((bal - plan) / plan) * 100, 2) if plan else 0,
+        },
+        "plans": plans,
+    })
+
+
+async def api_prop_start(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    plan_id = str(body.get("plan") or body.get("plan_id") or "").lower()
+    if plan_id in ("10k", "10000"):
+        plan, fee = 10000.0, 50.0
+    elif plan_id in ("50k", "50000"):
+        plan, fee = 50000.0, 200.0
+    else:
+        raise web.HTTPBadRequest(text='{"error":"invalid_plan"}', content_type="application/json")
+    try:
+        result, size = await start_prop_challenge(validated.user.id, plan_size=plan, fee=fee)
+        return web.json_response({
+            "ok": True,
+            "plan_size": size,
+            "fee": fee,
+            "virtual_balance": size,
+            "balance_ton": result.ton_balance,
+            "status": "active",
+        })
+    except InsufficientBalance:
+        raise web.HTTPPaymentRequired(text='{"error":"insufficient_balance"}', content_type="application/json")
+    except (InvalidAmount, BusinessRuleError) as exc:
+        raise web.HTTPBadRequest(text='{"error":"%s"}' % exc, content_type="application/json")
+
+
+async def api_prop_trade(request: web.Request) -> web.Response:
+    """Open a short virtual prop tick: wait client-side then settle with server price path."""
+    validated = _authenticate(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    direction = str(body.get("direction") or "").lower()
+    try:
+        amount = float(body.get("amount") or 0)
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_amount"}', content_type="application/json")
+    symbol = str(body.get("symbol") or "BTCUSDT").upper()
+
+    # entry price
+    entry = await get_market_price(symbol)
+    if not entry or entry <= 0:
+        raise web.HTTPServiceUnavailable(text='{"error":"price_unavailable"}', content_type="application/json")
+
+    # brief server-side window (client also waits ~3s)
+    await asyncio.sleep(2.5)
+    exit_p = await get_market_price(symbol)
+    if not exit_p or exit_p <= 0:
+        exit_p = entry
+    went_up = exit_p >= entry
+    won = (direction == "up" and went_up) or (direction == "down" and not went_up)
+    try:
+        result = await prop_virtual_trade(
+            validated.user.id,
+            direction=direction,
+            amount=amount,
+            won=won,
+            payout_rate=1.8,
+        )
+        return web.json_response({
+            "ok": True,
+            "won": won,
+            "entry_price": entry,
+            "exit_price": exit_p,
+            "direction": direction,
+            "amount": amount,
+            **result,
+        })
+    except InsufficientBalance:
+        raise web.HTTPPaymentRequired(text='{"error":"insufficient_virtual_balance"}', content_type="application/json")
+    except BusinessRuleError as exc:
+        raise web.HTTPBadRequest(text='{"error":"%s"}' % exc, content_type="application/json")
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     app.router.add_get("/api/health", health)
@@ -429,6 +535,9 @@ def create_api_app() -> web.Application:
     app.router.add_post("/api/binary/settle-due", api_binary_settle_due)
     app.router.add_get("/api/swap/quote", api_swap_quote)
     app.router.add_post("/api/swap/ton-usdt", api_swap_ton_usdt)
+    app.router.add_get("/api/prop/status", api_prop_status)
+    app.router.add_post("/api/prop/start", api_prop_start)
+    app.router.add_post("/api/prop/trade", api_prop_trade)
     app.router.add_get("/api/sniper/config", api_sniper_config)
     app.router.add_post("/api/sniper/open", api_sniper_open)
     app.router.add_post("/api/sniper/settle", api_sniper_settle)
