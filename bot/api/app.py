@@ -37,7 +37,7 @@ from bot.services.sniper import (
 from bot.db.ledger import (
     BusinessRuleError, InsufficientBalance, InvalidAmount, swap_ton_to_usdt,
     start_prop_challenge, get_prop_account, prop_virtual_trade,
-    claim_prop_reward, list_prop_trades,
+    claim_prop_reward, list_prop_trades, hold_withdraw, hold_withdraw,
 )
 from bot.security import rate_limit, require_not_frozen, sanitize_amount
 from bot.services.telegram_auth import (
@@ -583,11 +583,58 @@ async def api_prop_history(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "trades": rows})
 
 
+
+async def api_withdraw(request: web.Request) -> web.Response:
+    """Create withdraw request: holds TON immediately, optional auto on-chain under threshold."""
+    validated = _authenticate(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    try:
+        amount = float(body.get("amount") or 0)
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_amount"}', content_type="application/json")
+    address = str(body.get("address") or "").strip()
+    if amount < 1:
+        raise web.HTTPBadRequest(text='{"error":"min_withdraw_1"}', content_type="application/json")
+    if len(address) < 20:
+        raise web.HTTPBadRequest(text='{"error":"invalid_address"}', content_type="application/json")
+    try:
+        result, req_id = await hold_withdraw(validated.user.id, amount, address=address)
+    except InsufficientBalance:
+        raise web.HTTPPaymentRequired(
+            text='{"error":"insufficient_balance"}', content_type="application/json"
+        )
+    except (InvalidAmount, BusinessRuleError) as exc:
+        raise web.HTTPBadRequest(text='{"error":"%s"}' % exc, content_type="application/json")
+
+    auto_info = None
+    try:
+        from bot.services.withdraw import try_auto_withdraw
+        auto_info = await try_auto_withdraw(req_id, amount, address)
+    except Exception:
+        logger.exception("auto withdraw hook failed")
+        auto_info = {"ok": False, "reason": "auto_failed"}
+
+    return web.json_response({
+        "ok": True,
+        "request_id": req_id,
+        "amount": amount,
+        "address": address,
+        "balance_ton": result.ton_balance,
+        "status": "pending",
+        "auto": auto_info,
+        "note": "Withdraw held. Processing may require admin if above auto threshold.",
+    })
+
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/me", api_me)
     app.router.add_get("/api/transactions", api_transactions)
+    app.router.add_post("/api/withdraw", api_withdraw)
     app.router.add_post("/api/ping", api_ping)
     app.router.add_get("/api/binary/config", api_binary_config)
     app.router.add_get("/api/binary/price", api_binary_price)
