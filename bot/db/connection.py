@@ -110,10 +110,45 @@ async def init_db() -> None:
                 user_id INTEGER PRIMARY KEY,
                 plan_size REAL,
                 virtual_balance REAL,
-                status TEXT DEFAULT 'active'
+                status TEXT DEFAULT 'active',
+                fee_paid REAL DEFAULT 0,
+                peak_balance REAL DEFAULT 0,
+                trades_count INTEGER DEFAULT 0,
+                profit_share REAL DEFAULT 0.8,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS prop_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                direction TEXT NOT NULL,
+                amount REAL NOT NULL,
+                entry_price REAL,
+                exit_price REAL,
+                profit REAL,
+                won INTEGER,
+                virtual_balance REAL,
+                status_after TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        for _ddl in (
+            "ALTER TABLE prop_accounts ADD COLUMN fee_paid REAL DEFAULT 0",
+            "ALTER TABLE prop_accounts ADD COLUMN peak_balance REAL DEFAULT 0",
+            "ALTER TABLE prop_accounts ADD COLUMN trades_count INTEGER DEFAULT 0",
+            "ALTER TABLE prop_accounts ADD COLUMN profit_share REAL DEFAULT 0.8",
+            "ALTER TABLE prop_accounts ADD COLUMN created_at TIMESTAMP",
+            "ALTER TABLE prop_accounts ADD COLUMN updated_at TIMESTAMP",
+        ):
+            try:
+                await db.execute(_ddl)
+            except Exception:
+                pass
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS stakes (
