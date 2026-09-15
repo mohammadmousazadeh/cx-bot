@@ -760,3 +760,73 @@ async def get_prop_account(user_id: int) -> dict | None:
         )
         row = await cur.fetchone()
         return dict(row) if row else None
+
+
+async def prop_virtual_trade(
+    user_id: int,
+    *,
+    direction: str,
+    amount: float,
+    won: bool,
+    payout_rate: float = 1.8,
+) -> dict:
+    """Apply a virtual prop trade result to prop_accounts.virtual_balance only."""
+    direction = (direction or "").strip().lower()
+    if direction not in ("up", "down"):
+        raise BusinessRuleError("invalid_direction")
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError) as exc:
+        raise InvalidAmount("invalid_amount") from exc
+    if amount <= 0:
+        raise InvalidAmount("amount must be positive")
+
+    async with get_db() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute(
+            "SELECT plan_size, virtual_balance, status FROM prop_accounts WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            await db.execute("ROLLBACK")
+            raise BusinessRuleError("no_prop_account")
+        if row["status"] != "active":
+            await db.execute("ROLLBACK")
+            raise BusinessRuleError("prop_not_active")
+        plan = float(row["plan_size"] or 0)
+        bal = float(row["virtual_balance"] or 0)
+        if amount > bal:
+            await db.execute("ROLLBACK")
+            raise InsufficientBalance("insufficient_virtual_balance")
+
+        if won:
+            profit = round(amount * (payout_rate - 1.0), 8)
+            new_bal = round(bal + profit, 8)
+        else:
+            profit = -amount
+            new_bal = round(bal - amount, 8)
+
+        status = "active"
+        # 10% max drawdown from plan size
+        dd_floor = plan * 0.90
+        target = plan * 1.10
+        if new_bal < dd_floor:
+            status = "failed"
+        elif new_bal >= target:
+            status = "passed"
+
+        await db.execute(
+            "UPDATE prop_accounts SET virtual_balance = ?, status = ? WHERE user_id = ?",
+            (new_bal, status, user_id),
+        )
+        await db.commit()
+        return {
+            "plan_size": plan,
+            "virtual_balance": new_bal,
+            "status": status,
+            "profit": profit,
+            "won": won,
+            "dd_floor": dd_floor,
+            "target": target,
+        }
