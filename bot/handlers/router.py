@@ -243,7 +243,7 @@ async def process_kyc_photo(message: Message, state: FSMContext):
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ تأیید احراز", callback_data=f"adm_kyc_accept_{user_id}"),
-            InlineKeyboardButton(text="❌ رد درخواست", callback_data=f"adm_kyc_reject_{user_id}")
+            InlineKeyboardButton(text="رد درخواست", callback_data=f"adm_kyc_reject_{user_id}")
         ]
     ])
     try:
@@ -269,7 +269,7 @@ async def cb_admin_kyc_accept(callback: CallbackQuery):
     await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n✅ **تأیید شد.**", reply_markup=None)
     try:
         target_lang = (await get_user_data(target_id))[0]
-        msg = "🎉 مدارک هویتی شما تأیید شد و حسابتان به سطح ۲ ارتقا یافت." if target_lang == "fa" else "🎉 KYC approved! Upgraded to Level 2."
+        msg = "مدارک هویتی شما تأیید شد و حسابتان به سطح ۲ ارتقا یافت." if target_lang == "fa" else "KYC approved! Upgraded to Level 2."
         await callback.bot.send_message(target_id, msg)
     except Exception:
         pass
@@ -278,10 +278,10 @@ async def cb_admin_kyc_accept(callback: CallbackQuery):
 async def cb_admin_kyc_reject(callback: CallbackQuery):
     if callback.from_user.id != settings.admin_id: return
     target_id = int(callback.data.split("_")[3])
-    await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n❌ **رد شد.**", reply_markup=None)
+    await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n**رد شد.**", reply_markup=None)
     try:
         target_lang = (await get_user_data(target_id))[0]
-        msg = "❌ مدارک شما رد شد. لطفاً تصویر واضح و ایمیل معتبر ارسال فرمایید." if target_lang == "fa" else "❌ KYC Rejected."
+        msg = "مدارک شما رد شد. لطفاً تصویر واضح و ایمیل معتبر ارسال فرمایید." if target_lang == "fa" else "KYC Rejected."
         await callback.bot.send_message(target_id, msg)
     except Exception:
         pass
@@ -313,7 +313,7 @@ async def pnl_card_handler(message: Message, state: FSMContext):
         await message.answer_photo(photo=input_file, caption=caption, parse_mode="HTML")
     except Exception as e:
         logging.exception("PNL Error")
-        await message.answer(f"❌ خطا در تولید کارت: {e}")
+        await message.answer(f"خطا در تولید کارت: {e}")
 
 @router.message(F.web_app_data, StateFilter("*"))
 async def web_app_data_handler(message: Message, state: FSMContext):
@@ -393,7 +393,7 @@ async def web_app_data_handler(message: Message, state: FSMContext):
             )
             await message.answer(receipt, reply_markup=get_main_dashboard_kb(lang, new_balance, kyc, user_id == settings.admin_id, user_id=user_id), parse_mode="Markdown")
         except Exception:
-            await message.answer("❌ خطا در پردازش سواپ.")
+            await message.answer("خطا در پردازش سواپ.")
 
     elif data == "withdraw_req":
         loan, pin, cooldown = user_data[3], user_data[6], user_data[7]
@@ -638,7 +638,7 @@ async def process_admin_reply(message: Message, state: FSMContext):
         await message.bot.send_message(target_uid, f"🎧 **پاسخ پشتیبانی صرافی CX:**\n\n{message.text}")
         await message.answer("✅ پاسخ تیکت برای کاربر ارسال گردید.")
     except Exception:
-        await message.answer("❌ خطا در ارسال پیام به کاربر.")
+        await message.answer("خطا در ارسال پیام به کاربر.")
     await state.clear()
 
 async def security_center_handler(message: Message, state: FSMContext):
@@ -682,7 +682,7 @@ async def process_pin_setup(message: Message, state: FSMContext):
         
     pin = message.text.strip()
     if not (pin.isdigit() and len(pin) == 4):
-        return await message.answer("❌ پین باید ۴ رقمی باشد.")
+        return await message.answer("پین باید ۴ رقمی باشد.")
         
     cooldown = datetime.now() + timedelta(hours=24)
     async with aiosqlite.connect(settings.db_name) as db:
@@ -748,7 +748,7 @@ async def process_transfer_userid(message: Message, state: FSMContext):
         await message.answer(t["transfer_amt_ask"], reply_markup=get_cancel_kb(lang))
         await state.set_state(UserStates.waiting_for_transfer_amount)
     except ValueError:
-        await message.answer("❌ شناسه نامعتبر است.")
+        await message.answer("شناسه نامعتبر است.")
 
 @router.message(StateFilter(UserStates.waiting_for_transfer_amount))
 async def process_transfer_amount(message: Message, state: FSMContext):
@@ -769,7 +769,7 @@ async def process_transfer_amount(message: Message, state: FSMContext):
         except InsufficientBalance:
             return await message.answer(t["insufficient_bal"])
         except Exception as e:
-            return await message.answer(f"❌ {e}")
+            return await message.answer(f"{e}")
         await log_security_event(user_id, f"P2P {amount} -> {target_id}")
         await message.answer(
             f"✅ انتقال `{amount:g} TON` به کاربر `{target_id}` انجام شد.",
