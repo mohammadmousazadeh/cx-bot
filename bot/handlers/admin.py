@@ -184,34 +184,34 @@ def admin_kb(uid: int) -> InlineKeyboardMarkup:
     maint = t["on"] if getattr(settings, "maintenance_mode", False) else t["off"]
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=t["btn_refresh"], callback_data="adm_refresh")],
+            [InlineKeyboardButton(text=f"📊 {t['btn_refresh']}", callback_data="adm_refresh")],
             [
-                InlineKeyboardButton(text=f"{t['btn_freeze']}: {freeze}", callback_data="adm_toggle_freeze"),
-                InlineKeyboardButton(text=f"{t['btn_maint']}: {maint}", callback_data="adm_toggle_maint"),
+                InlineKeyboardButton(text=f"🛡 {t['btn_freeze']}: {freeze}", callback_data="adm_toggle_freeze"),
+                InlineKeyboardButton(text=f"🛠 {t['btn_maint']}: {maint}", callback_data="adm_toggle_maint"),
             ],
             [
-                InlineKeyboardButton(text=t["btn_wd"], callback_data="adm_withdraws"),
-                InlineKeyboardButton(text=t["btn_tickets"], callback_data="adm_tickets"),
+                InlineKeyboardButton(text=f"💸 {t['btn_wd']}", callback_data="adm_withdraws"),
+                InlineKeyboardButton(text=f"🎫 {t['btn_tickets']}", callback_data="adm_tickets"),
             ],
             [
-                InlineKeyboardButton(text=t["btn_binary"], callback_data="adm_open_binary"),
-                InlineKeyboardButton(text=t["btn_prop"], callback_data="adm_prop"),
+                InlineKeyboardButton(text=f"📈 {t['btn_binary']}", callback_data="adm_open_binary"),
+                InlineKeyboardButton(text=f"🏆 {t['btn_prop']}", callback_data="adm_prop"),
             ],
             [
-                InlineKeyboardButton(text=t["btn_lookup"], callback_data="adm_lookup"),
-                InlineKeyboardButton(text=t["btn_daily"], callback_data="adm_daily"),
+                InlineKeyboardButton(text=f"🪪 {t['btn_kyc']}", callback_data="adm_kyc"),
+                InlineKeyboardButton(text=f"📅 {t['btn_daily']}", callback_data="adm_daily"),
             ],
             [
-                InlineKeyboardButton(text=t["btn_credit"], callback_data="adm_credit"),
-                InlineKeyboardButton(text=t["btn_debit"], callback_data="adm_debit"),
+                InlineKeyboardButton(text=f"🔎 {t['btn_lookup']}", callback_data="adm_lookup"),
+                InlineKeyboardButton(text=f"📜 {t['btn_tx']}", callback_data="adm_recent_tx"),
             ],
             [
-                InlineKeyboardButton(text=t["btn_tx"], callback_data="adm_recent_tx"),
-                InlineKeyboardButton(text=t["btn_kyc"], callback_data="adm_kyc"),
+                InlineKeyboardButton(text=f"➕ {t['btn_credit']}", callback_data="adm_credit"),
+                InlineKeyboardButton(text=f"➖ {t['btn_debit']}", callback_data="adm_debit"),
             ],
             [
-                InlineKeyboardButton(text=t["btn_broadcast"], callback_data="adm_broadcast"),
-                InlineKeyboardButton(text=t["btn_lang"], callback_data="adm_lang"),
+                InlineKeyboardButton(text=f"📣 {t['btn_broadcast']}", callback_data="adm_broadcast"),
+                InlineKeyboardButton(text=f"🌐 {t['btn_lang']}", callback_data="adm_lang"),
             ],
         ]
     )
@@ -588,35 +588,80 @@ async def cb_recent_tx(callback: CallbackQuery):
 async def cb_kyc(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
         return await callback.answer("Denied", show_alert=True)
-    t = _t(callback.from_user.id)
-    # Users still at level 1 (phone verified, docs may be pending via photo flow)
+    uid = callback.from_user.id
+    t = _t(uid)
     async with aiosqlite.connect(settings.db_name) as db:
         db.row_factory = aiosqlite.Row
+        c0 = (await (await db.execute("SELECT COUNT(*) FROM users WHERE kyc_level=0")).fetchone())[0]
+        c1 = (await (await db.execute("SELECT COUNT(*) FROM users WHERE kyc_level=1")).fetchone())[0]
+        c2 = (await (await db.execute("SELECT COUNT(*) FROM users WHERE kyc_level=2")).fetchone())[0]
         rows = await (await db.execute(
             """
-            SELECT user_id, phone, email, kyc_level, balance
-            FROM users WHERE kyc_level = 1
-            ORDER BY user_id DESC LIMIT 20
+            SELECT user_id, phone, email, kyc_level, balance, join_date
+            FROM users
+            WHERE kyc_level IN (0, 1)
+            ORDER BY kyc_level DESC, user_id DESC
+            LIMIT 25
             """
         )).fetchall()
+    summary = "**KYC**\nL0: `%s` · L1: `%s` · L2: `%s`" % (c0, c1, c2)
+    await callback.message.answer(summary, parse_mode="Markdown")
     if not rows:
         return await callback.answer(t["no_kyc"], show_alert=True)
     for r in rows:
-        uid = r["user_id"]
+        u = r["user_id"]
+        lvl = int(r["kyc_level"] or 0)
         text = (
-            f"KYC L1 user `{uid}`\n"
-            f"Phone: `{r['phone'] or '-'}`\n"
-            f"Email: `{r['email'] or '-'}`\n"
-            f"Balance: `{float(r['balance'] or 0):.4f}` TON"
+            "User `%s` · **L%s**\n"
+            "Phone: `%s`\n"
+            "Email: `%s`\n"
+            "Balance: `%.4f` TON\n"
+            "Joined: `%s`"
+        ) % (
+            u,
+            lvl,
+            r["phone"] or "-",
+            r["email"] or "-",
+            float(r["balance"] or 0),
+            r["join_date"] or "-",
         )
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(text="Approve L2", callback_data=f"adm_kyc_accept_{uid}"),
-                InlineKeyboardButton(text="Reject", callback_data=f"adm_kyc_reject_{uid}"),
-            ]]
-        )
+        buttons = []
+        if lvl < 1:
+            buttons.append(InlineKeyboardButton(text="Set L1", callback_data="adm_kyc_set_%s_1" % u))
+        if lvl < 2:
+            buttons.append(InlineKeyboardButton(text="Approve L2", callback_data="adm_kyc_accept_%s" % u))
+        buttons.append(InlineKeyboardButton(text="Set L0", callback_data="adm_kyc_set_%s_0" % u))
+        if lvl >= 1:
+            buttons.append(InlineKeyboardButton(text="Reject to L0", callback_data="adm_kyc_reject_%s" % u))
+        rows_kb = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+        kb = InlineKeyboardMarkup(inline_keyboard=rows_kb)
         await callback.message.answer(text, reply_markup=kb, parse_mode="Markdown")
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm_kyc_set_"), StateFilter("*"))
+async def cb_kyc_set(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer("Denied", show_alert=True)
+    parts = callback.data.split("_")
+    target_id = int(parts[3])
+    level = int(parts[4])
+    if level not in (0, 1, 2):
+        return await callback.answer("Bad level", show_alert=True)
+    async with aiosqlite.connect(settings.db_name) as db:
+        await db.execute("UPDATE users SET kyc_level = ? WHERE user_id = ?", (level, target_id))
+        await db.commit()
+    await callback.message.edit_text((callback.message.text or "") + "\n\n-> KYC set to L%s" % level)
+    await callback.answer("L%s" % level)
+    try:
+        if level >= 2:
+            msg = "KYC Level 2 approved." if _lang(callback.from_user.id) == "en" else "احراز هویت سطح ۲ تأیید شد."
+            await callback.bot.send_message(target_id, msg)
+        elif level == 0:
+            msg = "KYC reset to Level 0." if _lang(callback.from_user.id) == "en" else "سطح احراز به ۰ بازگردانده شد."
+            await callback.bot.send_message(target_id, msg)
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "adm_lookup", StateFilter("*"))
