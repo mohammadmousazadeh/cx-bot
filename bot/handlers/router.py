@@ -548,19 +548,28 @@ async def support_menu_handler(message: Message, state: FSMContext):
     user_data = await get_user_data(message.from_user.id)
     lang = user_data[0]
     t = TEXTS[lang]
-    
+    contact = "پیام مستقیم به پشتیبانی" if lang == "fa" else "Contact support"
+    back_note = ""  # unused
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text=FAQ_DATA["faq_deposit"][f"title_{lang}"], callback_data="faq_deposit"),
-            InlineKeyboardButton(text=FAQ_DATA["faq_withdraw"][f"title_{lang}"], callback_data="faq_withdraw")
+            InlineKeyboardButton(text=FAQ_DATA["faq_withdraw"][f"title_{lang}"], callback_data="faq_withdraw"),
+        ],
+        [
+            InlineKeyboardButton(text=FAQ_DATA["faq_binary"][f"title_{lang}"], callback_data="faq_binary"),
+            InlineKeyboardButton(text=FAQ_DATA["faq_swap"][f"title_{lang}"], callback_data="faq_swap"),
+        ],
+        [
+            InlineKeyboardButton(text=FAQ_DATA["faq_sniper"][f"title_{lang}"], callback_data="faq_sniper"),
+            InlineKeyboardButton(text=FAQ_DATA["faq_prop"][f"title_{lang}"], callback_data="faq_prop"),
         ],
         [
             InlineKeyboardButton(text=FAQ_DATA["faq_kyc"][f"title_{lang}"], callback_data="faq_kyc"),
-            InlineKeyboardButton(text=FAQ_DATA["faq_prop"][f"title_{lang}"], callback_data="faq_prop")
+            InlineKeyboardButton(text=FAQ_DATA["faq_security"][f"title_{lang}"], callback_data="faq_security"),
         ],
         [
-            InlineKeyboardButton(text="💬 ارتباط مستقیم با کارشناس", callback_data="start_direct_ticket")
-        ]
+            InlineKeyboardButton(text=contact, callback_data="start_direct_ticket"),
+        ],
     ])
     await message.answer(t["support_title"], reply_markup=kb, parse_mode="Markdown")
 
@@ -572,7 +581,7 @@ async def cb_faq_details(callback: CallbackQuery):
     
     if faq_key in FAQ_DATA:
         ans = FAQ_DATA[faq_key][f"ans_{lang}"]
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 بازگشت به سوالات", callback_data="back_to_support")]])
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=("بازگشت به سوالات" if lang=="fa" else "Back to FAQ"), callback_data="back_to_support")]])
         await callback.message.edit_text(ans, reply_markup=kb, parse_mode="Markdown")
 
 @router.callback_query(F.data == "back_to_support", StateFilter("*"))
