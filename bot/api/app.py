@@ -35,9 +35,21 @@ from bot.services.sniper import (
     list_sniper_rounds,
 )
 from bot.db.ledger import (
-    BusinessRuleError, InsufficientBalance, InvalidAmount, swap_ton_to_usdt,
-    start_prop_challenge, get_prop_account, prop_virtual_trade,
-    claim_prop_reward, list_prop_trades, hold_withdraw, hold_withdraw,
+    BusinessRuleError,
+    InsufficientBalance,
+    InvalidAmount,
+    TxKind,
+    swap_ton_to_usdt,
+    start_prop_challenge,
+    get_prop_account,
+    prop_virtual_trade,
+    claim_prop_reward,
+    list_prop_trades,
+    hold_withdraw,
+    complete_withdraw,
+    reject_withdraw,
+    credit_ton,
+    debit_ton,
 )
 from bot.security import rate_limit, require_not_frozen, sanitize_amount
 from bot.services.telegram_auth import (
@@ -128,6 +140,14 @@ def _authenticate(request: web.Request):
             content_type="application/json",
         )
     return validated
+
+
+def _require_admin(request: web.Request):
+    validated = _authenticate(request)
+    if int(validated.user.id) != int(settings.admin_id):
+        raise web.HTTPForbidden(text='{"error":"admin_only"}', content_type="application/json")
+    return validated
+
 
 
 async def health(_request: web.Request) -> web.Response:
@@ -629,8 +649,261 @@ async def api_withdraw(request: web.Request) -> web.Response:
     })
 
 
+
+async def api_admin_stats(request: web.Request) -> web.Response:
+    _require_admin(request)
+    import aiosqlite
+    from datetime import datetime
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        users = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
+        bal = await (await db.execute(
+            "SELECT COALESCE(SUM(balance),0), COALESCE(SUM(usdt_balance),0) FROM users"
+        )).fetchone()
+        pwd = await (await db.execute(
+            "SELECT COUNT(*), COALESCE(SUM(amount),0) FROM requests WHERE req_type='withdraw' AND status='pending'"
+        )).fetchone()
+        open_bin = (await (await db.execute(
+            "SELECT COUNT(*) FROM binary_trades WHERE status='open'"
+        )).fetchone())[0]
+        try:
+            prop_a = (await (await db.execute(
+                "SELECT COUNT(*) FROM prop_accounts WHERE status='active'"
+            )).fetchone())[0]
+        except Exception:
+            prop_a = 0
+        try:
+            tickets = (await (await db.execute(
+                "SELECT COUNT(*) FROM support_tickets WHERE status='open'"
+            )).fetchone())[0]
+        except Exception:
+            tickets = 0
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        try:
+            new_u = (await (await db.execute(
+                "SELECT COUNT(*) FROM users WHERE date(join_date)=date(?)", (today,)
+            )).fetchone())[0]
+        except Exception:
+            new_u = 0
+        try:
+            tx_today = (await (await db.execute(
+                "SELECT COUNT(*) FROM transactions WHERE date(created_at)=date(?)", (today,)
+            )).fetchone())[0]
+        except Exception:
+            tx_today = 0
+        kyc = await (await db.execute(
+            "SELECT "
+            "SUM(CASE WHEN kyc_level=0 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN kyc_level=1 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN kyc_level=2 THEN 1 ELSE 0 END) FROM users"
+        )).fetchone()
+    return web.json_response({
+        "ok": True,
+        "users": users,
+        "ton": float(bal[0] or 0),
+        "usdt": float(bal[1] or 0),
+        "pending_withdraws": int(pwd[0] or 0),
+        "pending_withdraw_ton": float(pwd[1] or 0),
+        "open_binary": open_bin,
+        "active_prop": prop_a,
+        "open_tickets": tickets,
+        "new_users_today": new_u,
+        "tx_today": tx_today,
+        "kyc": {"l0": int(kyc[0] or 0), "l1": int(kyc[1] or 0), "l2": int(kyc[2] or 0)},
+        "freeze": bool(settings.emergency_freeze),
+        "maintenance": bool(getattr(settings, "maintenance_mode", False)),
+    })
+
+
+async def api_admin_withdraws(request: web.Request) -> web.Response:
+    _require_admin(request)
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            """
+            SELECT request_id, user_id, amount, address, status, created_at
+            FROM requests WHERE req_type='withdraw' AND status='pending'
+            ORDER BY request_id ASC LIMIT 30
+            """
+        )).fetchall()
+    return web.json_response({"ok": True, "items": [dict(r) for r in rows]})
+
+
+async def api_admin_withdraw_action(request: web.Request) -> web.Response:
+    _require_admin(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    rid = int(body.get("request_id") or 0)
+    action = str(body.get("action") or "").lower()
+    if not rid:
+        raise web.HTTPBadRequest(text='{"error":"bad_id"}', content_type="application/json")
+    if action == "approve":
+        await complete_withdraw(rid, tx_hash=f"admin_web_{rid}")
+        return web.json_response({"ok": True, "status": "completed"})
+    if action == "reject":
+        res = await reject_withdraw(rid)
+        return web.json_response({"ok": True, "status": "rejected", "balance_ton": res.ton_balance})
+    raise web.HTTPBadRequest(text='{"error":"bad_action"}', content_type="application/json")
+
+
+async def api_admin_user(request: web.Request) -> web.Response:
+    _require_admin(request)
+    import aiosqlite
+    try:
+        uid = int(request.query.get("user_id") or 0)
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"bad_user"}', content_type="application/json")
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute(
+            "SELECT user_id, balance, usdt_balance, kyc_level, loan_amount, lang, phone, email, join_date FROM users WHERE user_id=?",
+            (uid,),
+        )).fetchone()
+    if not row:
+        raise web.HTTPNotFound(text='{"error":"not_found"}', content_type="application/json")
+    return web.json_response({"ok": True, "user": dict(row)})
+
+
+async def api_admin_credit(request: web.Request) -> web.Response:
+    validated = _require_admin(request)
+    try:
+        body = await request.json()
+        uid = int(body.get("user_id"))
+        amount = float(body.get("amount"))
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_body"}', content_type="application/json")
+    if amount <= 0:
+        raise web.HTTPBadRequest(text='{"error":"amount"}', content_type="application/json")
+    res = await credit_ton(uid, amount, kind=TxKind.ADMIN_CREDIT, meta={"by_admin": validated.user.id, "via": "web"})
+    return web.json_response({"ok": True, "balance_ton": res.ton_balance})
+
+
+async def api_admin_debit(request: web.Request) -> web.Response:
+    validated = _require_admin(request)
+    try:
+        body = await request.json()
+        uid = int(body.get("user_id"))
+        amount = float(body.get("amount"))
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_body"}', content_type="application/json")
+    if amount <= 0:
+        raise web.HTTPBadRequest(text='{"error":"amount"}', content_type="application/json")
+    try:
+        res = await debit_ton(uid, amount, kind=TxKind.ADMIN_DEBIT, meta={"by_admin": validated.user.id, "via": "web"})
+    except InsufficientBalance:
+        raise web.HTTPPaymentRequired(text='{"error":"insufficient_balance"}', content_type="application/json")
+    return web.json_response({"ok": True, "balance_ton": res.ton_balance})
+
+
+async def api_admin_toggle(request: web.Request) -> web.Response:
+    _require_admin(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    key = str(body.get("key") or "")
+    if key == "freeze":
+        settings.emergency_freeze = not bool(settings.emergency_freeze)
+        return web.json_response({"ok": True, "freeze": settings.emergency_freeze})
+    if key == "maintenance":
+        settings.maintenance_mode = not bool(getattr(settings, "maintenance_mode", False))
+        return web.json_response({"ok": True, "maintenance": settings.maintenance_mode})
+    raise web.HTTPBadRequest(text='{"error":"bad_key"}', content_type="application/json")
+
+
+async def api_admin_kyc_list(request: web.Request) -> web.Response:
+    _require_admin(request)
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            """
+            SELECT user_id, phone, email, kyc_level, balance, join_date
+            FROM users WHERE kyc_level IN (0,1)
+            ORDER BY kyc_level DESC, user_id DESC LIMIT 40
+            """
+        )).fetchall()
+    return web.json_response({"ok": True, "items": [dict(r) for r in rows]})
+
+
+async def api_admin_kyc_set(request: web.Request) -> web.Response:
+    _require_admin(request)
+    import aiosqlite
+    try:
+        body = await request.json()
+        uid = int(body.get("user_id"))
+        level = int(body.get("level"))
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_body"}', content_type="application/json")
+    if level not in (0, 1, 2):
+        raise web.HTTPBadRequest(text='{"error":"bad_level"}', content_type="application/json")
+    async with aiosqlite.connect(settings.db_name) as db:
+        await db.execute("UPDATE users SET kyc_level=? WHERE user_id=?", (level, uid))
+        await db.commit()
+    return web.json_response({"ok": True, "user_id": uid, "kyc_level": level})
+
+
+async def api_admin_tickets(request: web.Request) -> web.Response:
+    _require_admin(request)
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            """
+            SELECT ticket_id, user_id, message, status, created_at
+            FROM support_tickets WHERE status='open'
+            ORDER BY ticket_id DESC LIMIT 30
+            """
+        )).fetchall()
+    return web.json_response({"ok": True, "items": [dict(r) for r in rows]})
+
+
+async def api_admin_ticket_close(request: web.Request) -> web.Response:
+    _require_admin(request)
+    import aiosqlite
+    try:
+        body = await request.json()
+        tid = int(body.get("ticket_id"))
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_body"}', content_type="application/json")
+    async with aiosqlite.connect(settings.db_name) as db:
+        await db.execute("UPDATE support_tickets SET status='closed' WHERE ticket_id=?", (tid,))
+        await db.commit()
+    return web.json_response({"ok": True})
+
+
+async def api_admin_recent_tx(request: web.Request) -> web.Response:
+    _require_admin(request)
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            """
+            SELECT id, user_id, kind, amount, currency, created_at
+            FROM transactions ORDER BY id DESC LIMIT 25
+            """
+        )).fetchall()
+    return web.json_response({"ok": True, "items": [dict(r) for r in rows]})
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
+    
+    app.router.add_get("/api/admin/stats", api_admin_stats)
+    app.router.add_get("/api/admin/withdraws", api_admin_withdraws)
+    app.router.add_post("/api/admin/withdraw-action", api_admin_withdraw_action)
+    app.router.add_get("/api/admin/user", api_admin_user)
+    app.router.add_post("/api/admin/credit", api_admin_credit)
+    app.router.add_post("/api/admin/debit", api_admin_debit)
+    app.router.add_post("/api/admin/toggle", api_admin_toggle)
+    app.router.add_get("/api/admin/kyc", api_admin_kyc_list)
+    app.router.add_post("/api/admin/kyc-set", api_admin_kyc_set)
+    app.router.add_get("/api/admin/tickets", api_admin_tickets)
+    app.router.add_post("/api/admin/ticket-close", api_admin_ticket_close)
+    app.router.add_get("/api/admin/transactions", api_admin_recent_tx)
+
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/me", api_me)
     app.router.add_get("/api/transactions", api_transactions)
