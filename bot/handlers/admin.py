@@ -62,6 +62,12 @@ T = {
         "btn_kyc": "KYC در انتظار",
         "btn_daily": "آمار روزانه",
         "btn_lang": "English",
+        "sec_system": "— سیستم —",
+        "sec_ops": "— عملیات —",
+        "sec_users": "— کاربران —",
+        "sec_finance": "— مالی —",
+        "sec_more": "— بیشتر —",
+        "btn_home": "خانه ادمین",
         "no_wd": "برداشت معلقی نیست",
         "no_binary": "معامله باینری باز نیست",
         "no_prop": "حساب پراپ نیست",
@@ -128,6 +134,12 @@ T = {
         "btn_kyc": "KYC queue",
         "btn_daily": "Daily stats",
         "btn_lang": "فارسی",
+        "sec_system": "— System —",
+        "sec_ops": "— Operations —",
+        "sec_users": "— Users —",
+        "sec_finance": "— Finance —",
+        "sec_more": "— More —",
+        "btn_home": "Admin home",
         "no_wd": "No pending withdrawals",
         "no_binary": "No open binary trades",
         "no_prop": "No prop accounts",
@@ -182,36 +194,46 @@ def admin_kb(uid: int) -> InlineKeyboardMarkup:
     t = _t(uid)
     freeze = t["on"] if settings.emergency_freeze else t["off"]
     maint = t["on"] if getattr(settings, "maintenance_mode", False) else t["off"]
+
+    def sep(label: str) -> list:
+        return [InlineKeyboardButton(text=label, callback_data="adm_noop")]
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=f"📊 {t['btn_refresh']}", callback_data="adm_refresh")],
+            sep(t["sec_system"]),
             [
-                InlineKeyboardButton(text=f"🛡 {t['btn_freeze']}: {freeze}", callback_data="adm_toggle_freeze"),
-                InlineKeyboardButton(text=f"🛠 {t['btn_maint']}: {maint}", callback_data="adm_toggle_maint"),
+                InlineKeyboardButton(text=t["btn_refresh"], callback_data="adm_refresh"),
+                InlineKeyboardButton(text=t["btn_lang"], callback_data="adm_lang"),
             ],
             [
-                InlineKeyboardButton(text=f"💸 {t['btn_wd']}", callback_data="adm_withdraws"),
-                InlineKeyboardButton(text=f"🎫 {t['btn_tickets']}", callback_data="adm_tickets"),
+                InlineKeyboardButton(text=f"{t['btn_freeze']}: {freeze}", callback_data="adm_toggle_freeze"),
+                InlineKeyboardButton(text=f"{t['btn_maint']}: {maint}", callback_data="adm_toggle_maint"),
+            ],
+            sep(t["sec_ops"]),
+            [
+                InlineKeyboardButton(text=t["btn_wd"], callback_data="adm_withdraws"),
+                InlineKeyboardButton(text=t["btn_tickets"], callback_data="adm_tickets"),
             ],
             [
-                InlineKeyboardButton(text=f"📈 {t['btn_binary']}", callback_data="adm_open_binary"),
-                InlineKeyboardButton(text=f"🏆 {t['btn_prop']}", callback_data="adm_prop"),
+                InlineKeyboardButton(text=t["btn_binary"], callback_data="adm_open_binary"),
+                InlineKeyboardButton(text=t["btn_prop"], callback_data="adm_prop"),
             ],
             [
-                InlineKeyboardButton(text=f"🪪 {t['btn_kyc']}", callback_data="adm_kyc"),
-                InlineKeyboardButton(text=f"📅 {t['btn_daily']}", callback_data="adm_daily"),
+                InlineKeyboardButton(text=t["btn_daily"], callback_data="adm_daily"),
+                InlineKeyboardButton(text=t["btn_tx"], callback_data="adm_recent_tx"),
+            ],
+            sep(t["sec_users"]),
+            [
+                InlineKeyboardButton(text=t["btn_lookup"], callback_data="adm_lookup"),
+                InlineKeyboardButton(text=t["btn_kyc"], callback_data="adm_kyc"),
             ],
             [
-                InlineKeyboardButton(text=f"🔎 {t['btn_lookup']}", callback_data="adm_lookup"),
-                InlineKeyboardButton(text=f"📜 {t['btn_tx']}", callback_data="adm_recent_tx"),
+                InlineKeyboardButton(text=t["btn_broadcast"], callback_data="adm_broadcast"),
             ],
+            sep(t["sec_finance"]),
             [
-                InlineKeyboardButton(text=f"➕ {t['btn_credit']}", callback_data="adm_credit"),
-                InlineKeyboardButton(text=f"➖ {t['btn_debit']}", callback_data="adm_debit"),
-            ],
-            [
-                InlineKeyboardButton(text=f"📣 {t['btn_broadcast']}", callback_data="adm_broadcast"),
-                InlineKeyboardButton(text=f"🌐 {t['btn_lang']}", callback_data="adm_lang"),
+                InlineKeyboardButton(text=t["btn_credit"], callback_data="adm_credit"),
+                InlineKeyboardButton(text=t["btn_debit"], callback_data="adm_debit"),
             ],
         ]
     )
