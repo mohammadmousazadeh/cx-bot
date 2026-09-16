@@ -21,6 +21,8 @@ from bot.db.ledger import (
     reject_withdraw,
 )
 from bot.states import UserStates
+from bot.keyboards.main import admin_webapp_url
+from aiogram.types import WebAppInfo
 
 logger = logging.getLogger("cx.admin")
 router = Router(name="admin")
@@ -31,7 +33,7 @@ router = Router(name="admin")
 T = {
     "fa": {
         "denied": "دسترسی ندارید",
-        "title": "مرکز مدیریت CX",
+        "title": "مرکز کنترل CX",
         "users": "کاربران",
         "ledger_ton": "مجموع TON",
         "ledger_usdt": "مجموع USDT",
@@ -41,31 +43,31 @@ T = {
         "loans": "وام‌ها",
         "freeze": "فریز اضطراری",
         "maint": "تعمیرات",
-        "on": "روشن",
-        "off": "خاموش",
+        "on": "فعال",
+        "off": "غیرفعال",
         "today_users": "کاربر جدید امروز",
         "today_tx": "تراکنش امروز",
         "today_volume": "حجم برداشت/واریز امروز",
         "open_tickets": "تیکت باز",
-        "btn_refresh": "بروزرسانی",
-        "btn_freeze": "فریز",
-        "btn_maint": "تعمیرات",
-        "btn_wd": "برداشت‌ها",
-        "btn_binary": "باینری باز",
-        "btn_lookup": "جستجوی کاربر",
-        "btn_credit": "افزایش موجودی",
-        "btn_debit": "کاهش موجودی",
-        "btn_broadcast": "پیام همگانی",
-        "btn_prop": "نمای پراپ",
-        "btn_tx": "تراکنش‌ها",
-        "btn_tickets": "تیکت‌ها",
-        "btn_kyc": "KYC در انتظار",
-        "btn_daily": "آمار روزانه",
+        "btn_refresh": "همگام‌سازی",
+        "btn_freeze": "قفل اضطراری",
+        "btn_maint": "حالت تعمیر",
+        "btn_wd": "صف برداشت",
+        "btn_binary": "باینری فعال",
+        "btn_lookup": "پروفایل کاربر",
+        "btn_credit": "واریز دستی",
+        "btn_debit": "کسر دستی",
+        "btn_broadcast": "اعلامیه سراسری",
+        "btn_prop": "میز پراپ",
+        "btn_tx": "دفترکل",
+        "btn_tickets": "پشتیبانی",
+        "btn_kyc": "میز احراز",
+        "btn_daily": "گزارش روز",
         "btn_lang": "English",
-        "sec_system": "— سیستم —",
-        "sec_ops": "— عملیات —",
-        "sec_users": "— کاربران —",
-        "sec_finance": "— مالی —",
+        "sec_system": "▸ سیستم",
+        "sec_ops": "▸ عملیات",
+        "sec_users": "▸ کاربران",
+        "sec_finance": "▸ خزانه",
         "sec_more": "— بیشتر —",
         "btn_home": "خانه ادمین",
         "no_wd": "برداشت معلقی نیست",
@@ -103,7 +105,7 @@ T = {
     },
     "en": {
         "denied": "Access denied",
-        "title": "CX Admin Hub",
+        "title": "CX Control Center",
         "users": "Users",
         "ledger_ton": "Ledger TON",
         "ledger_usdt": "Ledger USDT",
@@ -119,25 +121,25 @@ T = {
         "today_tx": "Tx today",
         "today_volume": "Deposit/withdraw volume today",
         "open_tickets": "Open tickets",
-        "btn_refresh": "Refresh",
-        "btn_freeze": "Freeze",
+        "btn_refresh": "Sync",
+        "btn_freeze": "Kill switch",
         "btn_maint": "Maintenance",
-        "btn_wd": "Withdrawals",
-        "btn_binary": "Open binary",
-        "btn_lookup": "Lookup user",
-        "btn_credit": "Credit TON",
-        "btn_debit": "Debit TON",
-        "btn_broadcast": "Broadcast",
-        "btn_prop": "Prop overview",
-        "btn_tx": "Recent txs",
-        "btn_tickets": "Tickets",
-        "btn_kyc": "KYC queue",
-        "btn_daily": "Daily stats",
+        "btn_wd": "Withdraw queue",
+        "btn_binary": "Live binary",
+        "btn_lookup": "User profile",
+        "btn_credit": "Manual credit",
+        "btn_debit": "Manual debit",
+        "btn_broadcast": "Global notice",
+        "btn_prop": "Prop desk",
+        "btn_tx": "Ledger feed",
+        "btn_tickets": "Support desk",
+        "btn_kyc": "KYC desk",
+        "btn_daily": "Daily report",
         "btn_lang": "فارسی",
-        "sec_system": "— System —",
-        "sec_ops": "— Operations —",
-        "sec_users": "— Users —",
-        "sec_finance": "— Finance —",
+        "sec_system": "▸ SYSTEM",
+        "sec_ops": "▸ OPERATIONS",
+        "sec_users": "▸ USERS",
+        "sec_finance": "▸ TREASURY",
         "sec_more": "— More —",
         "btn_home": "Admin home",
         "no_wd": "No pending withdrawals",
@@ -201,6 +203,9 @@ def admin_kb(uid: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             sep(t["sec_system"]),
+            [
+                InlineKeyboardButton(text=("کنسول وب" if _lang(uid)=="fa" else "Web console"), web_app=WebAppInfo(url=admin_webapp_url(uid))),
+            ],
             [
                 InlineKeyboardButton(text=t["btn_refresh"], callback_data="adm_refresh"),
                 InlineKeyboardButton(text=t["btn_lang"], callback_data="adm_lang"),
@@ -269,7 +274,6 @@ async def _stats_text(uid: int) -> str:
             )).fetchone())[0]
         except Exception:
             open_tickets = 0
-        # today
         today = datetime.utcnow().strftime("%Y-%m-%d")
         try:
             new_u = (await (await db.execute(
@@ -284,20 +288,45 @@ async def _stats_text(uid: int) -> str:
         except Exception:
             tx_today = 0
 
+    freeze_s = t["on"] if settings.emergency_freeze else t["off"]
+    maint_s = t["on"] if getattr(settings, "maintenance_mode", False) else t["off"]
+    # Premium monospace dashboard (Telegram Markdown)
+    if _lang(uid) == "fa":
+        return (
+            f"**{t['title']}**\n"
+            f"`────────────────────`\n"
+            f"**خلاصه زنده**\n"
+            f"کاربران: `{total_users}` · امروز: `{new_u}`\n"
+            f"دفترکل TON: `{ton_sum:,.2f}`\n"
+            f"دفترکل USDT: `{usdt_sum:,.2f}`\n"
+            f"`────────────────────`\n"
+            f"**صف‌ها**\n"
+            f"برداشت معلق: `{pending_wd[0]}` (`{float(pending_wd[1] or 0):,.2f}`)\n"
+            f"تیکت باز: `{open_tickets}` · باینری باز: `{open_bin}`\n"
+            f"پراپ فعال: `{prop_active}` · وام: `{float(loans or 0):,.2f}`\n"
+            f"`────────────────────`\n"
+            f"**وضعیت سیستم**\n"
+            f"قفل اضطراری: `{freeze_s}`\n"
+            f"حالت تعمیر: `{maint_s}`\n"
+            f"تراکنش امروز: `{tx_today}`"
+        )
     return (
-        f"**{t['title']}**\n\n"
-        f"{t['users']}: `{total_users}`\n"
-        f"{t['ledger_ton']}: `{ton_sum:,.2f}`\n"
-        f"{t['ledger_usdt']}: `{usdt_sum:,.2f}`\n"
-        f"{t['pending_wd']}: `{pending_wd[0]}` (`{float(pending_wd[1] or 0):,.2f}` TON)\n"
-        f"{t['open_binary']}: `{open_bin}`\n"
-        f"{t['active_prop']}: `{prop_active}`\n"
-        f"{t['open_tickets']}: `{open_tickets}`\n"
-        f"{t['loans']}: `{float(loans or 0):,.2f}` TON\n"
-        f"{t['today_users']}: `{new_u}`\n"
-        f"{t['today_tx']}: `{tx_today}`\n"
-        f"{t['freeze']}: `{t['on'] if settings.emergency_freeze else t['off']}`\n"
-        f"{t['maint']}: `{t['on'] if getattr(settings, 'maintenance_mode', False) else t['off']}`"
+        f"**{t['title']}**\n"
+        f"`────────────────────`\n"
+        f"**Live summary**\n"
+        f"Users: `{total_users}` · Today: `{new_u}`\n"
+        f"Ledger TON: `{ton_sum:,.2f}`\n"
+        f"Ledger USDT: `{usdt_sum:,.2f}`\n"
+        f"`────────────────────`\n"
+        f"**Queues**\n"
+        f"Pending withdraw: `{pending_wd[0]}` (`{float(pending_wd[1] or 0):,.2f}`)\n"
+        f"Open tickets: `{open_tickets}` · Live binary: `{open_bin}`\n"
+        f"Active prop: `{prop_active}` · Loans: `{float(loans or 0):,.2f}`\n"
+        f"`────────────────────`\n"
+        f"**System status**\n"
+        f"Kill switch: `{freeze_s}`\n"
+        f"Maintenance: `{maint_s}`\n"
+        f"Tx today: `{tx_today}`"
     )
 
 
