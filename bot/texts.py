@@ -233,28 +233,52 @@ TEXTS = {
 }
 
 FAQ_DATA = {
- "faq_deposit": {
- "title_fa": "واریز و ممو",
- "title_en": "Deposit & Memo",
- "ans_fa": "**راهنمای واریز به صرافی CX:**\nتمامی واریزها در شبکه TON باید منحصراً از کیف‌پول **Tonkeeper** انجام شود. حتماً شناسه عددی اکانت خود را در بخش **Comment / Memo** وارد کنید تا واریز به صورت خودکار شناسایی شود. حداقل واریز مجاز 40 TON است.",
- "ans_en": "**Deposit Policy:**\nAll deposits must be executed via **Tonkeeper** on TON Mainnet. Always enter your numeric Telegram ID in the **Comment / Memo** field. Minimum deposit is 40 TON."
- },
- "faq_withdraw": {
- "title_fa": "شرایط و زمان برداشت",
- "title_en": "Withdrawals",
- "ans_fa": "**قوانین خروج دارایی:**\nحداقل مبلغ برداشت 150 TON است. تا زمان تسویه وام فلش امکان برداشت وجود ندارد. همچنین در صورت تغییر پین یا ولت لیست سفید، برداشت تا ۲۴ ساعت قفل خواهد بود.",
- "ans_en": "**Withdrawal Policy:**\nMinimum withdrawal is 150 TON. Settle active flash loans first. 24h security lock applies on PIN or whitelist changes."
- },
- "faq_kyc": {
- "title_fa": "احراز هویت (KYC)",
- "title_en": "KYC Levels",
- "ans_fa": "**سطوح کاربری صرافی:**\nسطح ۱ بلافاصله پس از تایید شماره تماس فعال می‌گردد. برای ارتقا به سطح ۲ (فول اکسس و نامحدود)، ثبت ایمیل دائمی رسمی و ارسال تصویر کارت ملی یا پاسپورت الزامی است.",
- "ans_en": "**Verification:**\nLevel 1 activates on phone verification. Level 2 unlocks unlimited limits upon official email and ID photo verification."
- },
- "faq_prop": {
- "title_fa": "چالش‌های پراپ",
- "title_en": "Prop Challenges",
- "ans_fa": "**سیستم پراپ تریدینگ:**\nبا پرداخت ورودی چالش، نقدینگی مجازی در مینی‌اپ در اختیارتان قرار می‌گیرد. با رسیدن به تارگت سود بدون نقض حد ضرر، سهم سود نقدی دریافت خواهید کرد.",
- "ans_en": "**Prop Engine:**\nPay the challenge fee to access simulated terminal capital. Reach the target profit without drawdown breach to withdraw profit share."
- }
+    "faq_deposit": {
+        "title_fa": "واریز و Memo",
+        "title_en": "Deposit & Memo",
+        "ans_fa": "**واریز TON**\n\n۱. از مینی‌اپ → Wallet → Deposit آدرس و Memo شخصی (`cx_USERID`) را کپی کنید.\n۲. فقط شبکه **TON** واریز کنید.\n۳. **Memo اجباری** است؛ بدون آن اعتبار خودکار انجام نمی‌شود.\n۴. حداقل واریز طبق تنظیم سرور (معمولاً ۱ TON).\n۵. پس از تأیید شبکه، موجودی Ledger به‌روز می‌شود.",
+        "ans_en": "**TON Deposit**\n\n1. Mini App → Wallet → Deposit — copy address and personal Memo (`cx_USERID`).\n2. Use **TON** network only.\n3. **Memo is required** for auto-credit.\n4. Minimum deposit follows server config (usually 1 TON).\n5. After network confirmation, Ledger balance updates.",
+    },
+    "faq_withdraw": {
+        "title_fa": "برداشت",
+        "title_en": "Withdrawals",
+        "ans_fa": "**برداشت TON**\n\n۱. Wallet → Withdraw → مبلغ و آدرس TON.\n۲. حداقل برداشت ۱ TON.\n۳. موجودی همان لحظه **مسدود (Hold)** می‌شود.\n۴. مبالغ زیر سقف auto ممکن است خودکار ارسال شوند؛ بالاتر نیاز به تأیید ادمین دارد.\n۵. فقط آدرس متعلق به خودتان را وارد کنید.",
+        "ans_en": "**TON Withdraw**\n\n1. Wallet → Withdraw — amount and TON address.\n2. Minimum 1 TON.\n3. Balance is **held** immediately.\n4. Under auto threshold may send automatically; larger amounts need admin approval.\n5. Use only your own address.",
+    },
+    "faq_kyc": {
+        "title_fa": "احراز هویت (KYC)",
+        "title_en": "KYC Levels",
+        "ans_fa": "**سطوح KYC**\n\n• **سطح ۰:** ثبت‌نام اولیه\n• **سطح ۱:** تأیید شماره تماس\n• **سطح ۲:** ایمیل + تصویر مدرک (کارت ملی/پاسپورت) پس از تأیید ادمین\n\nسطح ۲ برای دسترسی کامل‌تر به برخی محدودیت‌ها لازم است. مدارک باید واضح و خوانا باشند.",
+        "ans_en": "**KYC Levels**\n\n• **Level 0:** Basic signup\n• **Level 1:** Phone verified\n• **Level 2:** Email + ID photo after admin approval\n\nLevel 2 unlocks fuller access. Documents must be clear and readable.",
+    },
+    "faq_binary": {
+        "title_fa": "باینری آپشن",
+        "title_en": "Binary Options",
+        "ans_fa": "**Binary**\n\n• نمادها: BTC / ETH / TON\n• مدت: ۳۰ثانیه تا ۵ دقیقه\n• پرداخت برد: حدود **۱.۸۰ برابر** مبلغ\n• موجودی از Ledger کم/زیاد می‌شود\n• قیمت ورود و خروج از سرور خوانده می‌شود\n\nمسئولیت ریسک معاملات با کاربر است.",
+        "ans_en": "**Binary**\n\n• Symbols: BTC / ETH / TON\n• Duration: 30s to 5m\n• Win payout about **1.80x** stake\n• Ledger balance is debited/credited\n• Entry/exit prices come from server feeds\n\nTrading risk is yours.",
+    },
+    "faq_swap": {
+        "title_fa": "سواپ TON به USDT",
+        "title_en": "TON → USDT Swap",
+        "ans_fa": "**Swap داخلی**\n\n• تبدیل موجودی TON به USDT روی Ledger\n• نرخ زنده بازار + کارمزد حدود **۰.۳۰٪**\n• حداقل حدود ۰.۵ TON\n• نتیجه فوری در کیف پول داخلی دیده می‌شود",
+        "ans_en": "**Internal Swap**\n\n• Convert Ledger TON to USDT\n• Live market rate + about **0.30%** fee\n• Minimum about 0.5 TON\n• Result appears immediately in internal wallet",
+    },
+    "faq_sniper": {
+        "title_fa": "اسنایپر",
+        "title_en": "Sniper",
+        "ans_fa": "**Sniper**\n\nپیش‌بینی حرکت کوتاه‌مدت قیمت (حدود ۳ ثانیه).\nپرداخت برد حدود **۱.۸۵x**.\nموجودی واقعی Ledger درگیر می‌شود.",
+        "ans_en": "**Sniper**\n\nShort tick direction prediction (~3 seconds).\nWin payout about **1.85x**.\nUses real Ledger balance.",
+    },
+    "faq_prop": {
+        "title_fa": "چالش پراپ",
+        "title_en": "Prop Challenges",
+        "ans_fa": "**Prop**\n\n• پلن ۱۰k با ورودی ۵۰ TON یا ۵۰k با ورودی ۲۰۰ TON\n• هدف سود **+۱۰٪** بدون افت زیر **−۱۰٪**\n• معاملات روی موجودی مجازی\n• پس از PASSED می‌توانید **۸۰٪** سود را به کیف واقعی Claim کنید",
+        "ans_en": "**Prop**\n\n• 10k plan fee 50 TON or 50k plan fee 200 TON\n• Target **+10%** without breaking **−10%** drawdown\n• Trades use virtual capital\n• After PASSED claim **80%** of profit to real wallet",
+    },
+    "faq_security": {
+        "title_fa": "امنیت حساب",
+        "title_en": "Account Security",
+        "ans_fa": "**امنیت**\n\n• هرگز Seed یا Mnemonic را در ربات وارد نکنید\n• فقط از دکمه رسمی ربات مینی‌اپ را باز کنید\n• پین و ولت سفید (در صورت فعال بودن) را محرمانه نگه دارید\n• در صورت فعالیت مشکوک با پشتیبانی تماس بگیرید",
+        "ans_en": "**Security**\n\n• Never enter wallet seed/mnemonic in the bot\n• Open Mini App only from the official bot button\n• Keep PIN/whitelist private if enabled\n• Contact support if you see suspicious activity",
+    },
 }
