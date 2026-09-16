@@ -10,6 +10,12 @@ from bot.services.webapp_token import make_webapp_token
 from bot.texts import TEXTS
 
 
+def admin_webapp_url(user_id: int) -> str:
+    base = (settings.webapp_base_url or "").rstrip("/")
+    exp, sig = make_webapp_token(int(user_id), settings.bot_token)
+    return f"{base}/admin.html?uid={int(user_id)}&exp={exp}&sig={sig}"
+
+
 def _webapp_url(user_id: int | None = None) -> str:
     base = (settings.webapp_base_url or "").rstrip("/")
     rnd = random.randint(1000, 9999)
