@@ -31,6 +31,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from bot.config import settings
 from bot.db import init_db
 from bot.handlers import router
+from bot.handlers.admin import router as admin_router
 from bot.middlewares import AccessGuardMiddleware
 from bot.workers import (
     start_binary_settler,
@@ -52,6 +53,7 @@ def build_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=create_fsm_storage())
     dp.update.middleware(AccessGuardMiddleware())
     dp.include_router(router)
+    dp.include_router(admin_router)
     return dp
 
 
