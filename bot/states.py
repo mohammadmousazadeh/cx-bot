@@ -15,3 +15,6 @@ class UserStates(StatesGroup):
     waiting_for_swap_amount = State()
     waiting_for_support_msg = State()
     waiting_for_admin_reply_ticket = State()
+    waiting_for_admin_lookup = State()
+    waiting_for_admin_debit = State()
+    waiting_for_admin_broadcast = State()
