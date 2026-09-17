@@ -33,6 +33,9 @@ def _cors_list(value: str | None) -> List[str]:
 class Settings:
     bot_token: str
     admin_id: int
+    bot_username: str = ""
+    referral_l1_reward: float = 1.0
+    referral_l2_reward: float = 2.0
     db_name: str
     exchange_wallet: str
     payment_wallet: str
@@ -111,6 +114,9 @@ def load_settings() -> Settings:
     return Settings(
         bot_token=token,
         admin_id=admin_id,
+        bot_username=(os.getenv("BOT_USERNAME") or "").lstrip("@"),
+        referral_l1_reward=float(os.getenv("REFERRAL_L1_REWARD", "1")),
+        referral_l2_reward=float(os.getenv("REFERRAL_L2_REWARD", "2")),
         db_name=os.getenv("DB_NAME", "cx_database.db").strip(),
         exchange_wallet=exchange,
         payment_wallet=payment,
