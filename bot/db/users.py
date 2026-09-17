@@ -189,3 +189,31 @@ async def apply_referral_code(user_id: int, code: str) -> tuple[bool, str]:
         )
         await db.commit()
         return True, "ok"
+
+
+async def pay_referral_l2_reward(invitee_id: int) -> float:
+    """Credit referrer when invitee reaches KYC L2. Returns amount paid (0 if none)."""
+    from bot.config import settings
+    from bot.db.connection import get_db
+    from bot.db.ledger import TxKind, credit_ton
+
+    reward = float(getattr(settings, "referral_l2_reward", 0) or 0)
+    if reward <= 0:
+        return 0.0
+    async with get_db() as db:
+        cur = await db.execute("SELECT referrer_id FROM users WHERE user_id = ?", (invitee_id,))
+        row = await cur.fetchone()
+    if not row or not row[0]:
+        return 0.0
+    ref_id = int(row[0])
+    try:
+        await credit_ton(
+            ref_id,
+            reward,
+            kind=TxKind.MISSION_REWARD,
+            meta={"type": "referral_l2", "invitee": invitee_id, "amount": reward},
+            idempotency_key=f"referral_l2:{invitee_id}",
+        )
+        return reward
+    except Exception:
+        return 0.0
