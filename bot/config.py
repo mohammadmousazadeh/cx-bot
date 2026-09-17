@@ -33,9 +33,6 @@ def _cors_list(value: str | None) -> List[str]:
 class Settings:
     bot_token: str
     admin_id: int
-    bot_username: str = ""
-    referral_l1_reward: float = 1.0
-    referral_l2_reward: float = 2.0
     db_name: str
     exchange_wallet: str
     payment_wallet: str
@@ -79,6 +76,9 @@ class Settings:
     backup_interval_sec: float = 3600.0
     backup_dir: str = "backups"
     database_url: str = ""  # optional postgres URL for future / external tools
+    bot_username: str = ""
+    referral_l1_reward: float = 1.0
+    referral_l2_reward: float = 2.0
 
 
 def load_settings() -> Settings:
