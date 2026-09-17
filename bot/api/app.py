@@ -842,8 +842,30 @@ async def api_admin_kyc_set(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text='{"error":"bad_level"}', content_type="application/json")
     async with aiosqlite.connect(settings.db_name) as db:
         await db.execute("UPDATE users SET kyc_level=? WHERE user_id=?", (level, uid))
+        try:
+            if level >= 2:
+                await db.execute(
+                    "UPDATE kyc_submissions SET status='approved', reviewed_at=CURRENT_TIMESTAMP "
+                    "WHERE user_id=? AND status='pending'",
+                    (uid,),
+                )
+            elif level == 0:
+                await db.execute(
+                    "UPDATE kyc_submissions SET status='rejected', reviewed_at=CURRENT_TIMESTAMP "
+                    "WHERE user_id=? AND status='pending'",
+                    (uid,),
+                )
+        except Exception:
+            pass
         await db.commit()
-    return web.json_response({"ok": True, "user_id": uid, "kyc_level": level})
+    paid = 0.0
+    if level >= 2:
+        try:
+            from bot.db.users import pay_referral_l2_reward
+            paid = await pay_referral_l2_reward(uid)
+        except Exception:
+            logger.exception("referral l2 reward failed")
+    return web.json_response({"ok": True, "user_id": uid, "kyc_level": level, "referral_l2_paid": paid})
 
 
 async def api_admin_tickets(request: web.Request) -> web.Response:
@@ -948,6 +970,103 @@ async def api_referral_apply(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text='{"error":"%s"}' % reason, content_type="application/json")
     return web.json_response({"ok": True})
 
+
+async def api_kyc_status(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    uid = int(validated.user.id)
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        u = await (await db.execute(
+            "SELECT kyc_level, phone, email FROM users WHERE user_id=?", (uid,)
+        )).fetchone()
+        try:
+            sub = await (await db.execute(
+                """
+                SELECT id, status, email, created_at FROM kyc_submissions
+                WHERE user_id=? ORDER BY id DESC LIMIT 1
+                """,
+                (uid,),
+            )).fetchone()
+        except Exception:
+            sub = None
+    return web.json_response({
+        "ok": True,
+        "kyc_level": (u["kyc_level"] if u else 0) or 0,
+        "phone": (u["phone"] if u else None),
+        "email": (u["email"] if u else None),
+        "submission": dict(sub) if sub else None,
+        "referral_l1_reward": float(getattr(settings, "referral_l1_reward", 1.0) or 0),
+    })
+
+
+async def api_kyc_submit(request: web.Request) -> web.Response:
+    """Accept email + base64 passport/selfie images from Mini App."""
+    validated = _authenticate(request)
+    uid = int(validated.user.id)
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    email = str(body.get("email") or "").strip()
+    passport_b64 = str(body.get("passport_b64") or "")
+    selfie_b64 = str(body.get("selfie_b64") or "")
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise web.HTTPBadRequest(text='{"error":"invalid_email"}', content_type="application/json")
+    if not passport_b64 or not selfie_b64:
+        raise web.HTTPBadRequest(text='{"error":"images_required"}', content_type="application/json")
+
+    import aiosqlite
+    import base64
+    import re
+    from pathlib import Path as FsPath
+
+    def _decode(data: str) -> bytes:
+        m = re.match(r"^data:image/[^;]+;base64,(.+)$", data, re.S)
+        raw = m.group(1) if m else data
+        return base64.b64decode(raw)
+
+    try:
+        passport_bytes = _decode(passport_b64)
+        selfie_bytes = _decode(selfie_b64)
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_image"}', content_type="application/json")
+    if len(passport_bytes) > 5_000_000 or len(selfie_bytes) > 5_000_000:
+        raise web.HTTPBadRequest(text='{"error":"image_too_large"}', content_type="application/json")
+
+    root = FsPath(settings.db_name).resolve().parent / "kyc" / str(uid)
+    root.mkdir(parents=True, exist_ok=True)
+    pass_path = root / "passport.jpg"
+    self_path = root / "selfie.jpg"
+    pass_path.write_bytes(passport_bytes)
+    self_path.write_bytes(selfie_bytes)
+
+    async with aiosqlite.connect(settings.db_name) as db:
+        await db.execute("UPDATE users SET email = ? WHERE user_id = ?", (email, uid))
+        await db.execute(
+            """
+            INSERT INTO kyc_submissions (user_id, email, passport_file_id, selfie_file_id, status)
+            VALUES (?, ?, ?, ?, 'pending')
+            """,
+            (uid, email, str(pass_path), str(self_path)),
+        )
+        await db.commit()
+
+    # best-effort admin notify (text only; files on disk for ops)
+    try:
+        from aiogram import Bot
+        bot = Bot(token=settings.bot_token)
+        await bot.send_message(
+            settings.admin_id,
+            f"KYC Mini App submit\nUser: `{uid}`\nEmail: `{email}`\nFiles saved on server.\nApprove in Admin Console / bot.",
+            parse_mode="Markdown",
+        )
+        await bot.session.close()
+    except Exception:
+        logger.exception("kyc admin notify failed")
+
+    return web.json_response({"ok": True, "status": "pending"})
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -961,6 +1080,8 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/admin/kyc", api_admin_kyc_list)
     app.router.add_get("/api/admin/kyc-submissions", api_admin_kyc_submissions)
     app.router.add_get("/api/referral/me", api_referral_me)
+    app.router.add_get("/api/kyc/status", api_kyc_status)
+    app.router.add_post("/api/kyc/submit", api_kyc_submit)
     app.router.add_post("/api/referral/apply", api_referral_apply)
     app.router.add_post("/api/admin/kyc-set", api_admin_kyc_set)
     app.router.add_get("/api/admin/tickets", api_admin_tickets)
