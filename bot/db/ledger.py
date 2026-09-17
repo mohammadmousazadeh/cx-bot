@@ -26,6 +26,8 @@ class TxKind(str, Enum):
     TRANSFER_IN = "transfer_in"
     SWAP_TON_OUT = "swap_ton_out"
     SWAP_USDT_IN = "swap_usdt_in"
+    SWAP_USDT_OUT = "swap_usdt_out"
+    SWAP_TON_IN = "swap_ton_in"
     STAKE_LOCK = "stake_lock"
     STAKE_REWARD = "stake_reward"
     STAKE_UNLOCK = "stake_unlock"
@@ -369,7 +371,26 @@ async def swap_ton_to_usdt(
         kind=TxKind.SWAP_TON_OUT,
         ton_delta=-ton_amount,
         usdt_delta=usdt_amount,
-        meta={"rate": rate, "fee_ton": fee_ton, "usdt_received": usdt_amount},
+        meta={"rate": rate, "fee_ton": fee_ton, "usdt_received": usdt_amount, "pair": "TON/USDT"},
+    )
+
+
+async def swap_usdt_to_ton(
+    user_id: int,
+    usdt_amount: float,
+    ton_amount: float,
+    *,
+    rate: float,
+    fee_usdt: float,
+) -> LedgerResult:
+    if ton_amount <= 0 or usdt_amount <= 0:
+        raise InvalidAmount("swap amounts must be positive")
+    return await apply_entry(
+        user_id,
+        kind=TxKind.SWAP_USDT_OUT,
+        ton_delta=ton_amount,
+        usdt_delta=-usdt_amount,
+        meta={"rate": rate, "fee_usdt": fee_usdt, "ton_received": ton_amount, "pair": "USDT/TON"},
     )
 
 
