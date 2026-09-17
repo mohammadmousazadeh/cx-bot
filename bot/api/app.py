@@ -978,7 +978,7 @@ async def api_kyc_status(request: web.Request) -> web.Response:
     async with aiosqlite.connect(settings.db_name) as db:
         db.row_factory = aiosqlite.Row
         u = await (await db.execute(
-            "SELECT kyc_level, phone, email FROM users WHERE user_id=?", (uid,)
+            "SELECT kyc_level, phone, email, lang FROM users WHERE user_id=?", (uid,)
         )).fetchone()
         try:
             sub = await (await db.execute(
@@ -995,6 +995,7 @@ async def api_kyc_status(request: web.Request) -> web.Response:
         "kyc_level": (u["kyc_level"] if u else 0) or 0,
         "phone": (u["phone"] if u else None),
         "email": (u["email"] if u else None),
+        "lang": (u["lang"] if u and "lang" in u.keys() else "fa") or "fa",
         "submission": dict(sub) if sub else None,
         "referral_l1_reward": float(getattr(settings, "referral_l1_reward", 1.0) or 0),
     })
