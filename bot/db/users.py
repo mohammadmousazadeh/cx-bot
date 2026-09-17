@@ -133,3 +133,59 @@ async def set_user_fields(user_id: int, **fields: Any) -> None:
     async with get_db() as db:
         await db.execute(sql, values)
         await db.commit()
+
+
+async def ensure_referral_code(user_id: int) -> str:
+    import secrets
+    from bot.db.connection import get_db
+    async with get_db() as db:
+        cur = await db.execute("SELECT referral_code FROM users WHERE user_id = ?", (user_id,))
+        row = await cur.fetchone()
+        if row and row[0]:
+            return str(row[0])
+        for _ in range(8):
+            code = "CX-" + secrets.token_hex(3).upper()
+            try:
+                await db.execute(
+                    "UPDATE users SET referral_code = ? WHERE user_id = ? AND (referral_code IS NULL OR referral_code = '')",
+                    (code, user_id),
+                )
+                await db.commit()
+                cur2 = await db.execute("SELECT referral_code FROM users WHERE user_id = ?", (user_id,))
+                r2 = await cur2.fetchone()
+                if r2 and r2[0]:
+                    return str(r2[0])
+            except Exception:
+                continue
+        return "CX-%s" % user_id
+
+
+async def apply_referral_code(user_id: int, code: str) -> tuple[bool, str]:
+    from bot.db.connection import get_db
+    code = (code or "").strip().upper()
+    if not code:
+        return False, "empty"
+    async with get_db() as db:
+        cur = await db.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
+        row = await cur.fetchone()
+        if not row:
+            return False, "no_user"
+        if row[0]:
+            return False, "already"
+        cur = await db.execute(
+            "SELECT user_id FROM users WHERE upper(COALESCE(referral_code,'')) = ? LIMIT 1",
+            (code,),
+        )
+        ref = await cur.fetchone()
+        if not ref:
+            return False, "invalid"
+        ref_id = int(ref[0])
+        if ref_id == int(user_id):
+            return False, "self"
+        await db.execute("UPDATE users SET referrer_id = ? WHERE user_id = ?", (ref_id, user_id))
+        await db.execute(
+            "UPDATE users SET referral_count = COALESCE(referral_count, 0) + 1 WHERE user_id = ?",
+            (ref_id,),
+        )
+        await db.commit()
+        return True, "ok"
