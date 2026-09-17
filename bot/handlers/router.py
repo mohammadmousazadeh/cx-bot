@@ -223,41 +223,75 @@ async def process_kyc_email(message: Message, state: FSMContext):
         return await message.answer(t["email_invalid"])
 
     await state.update_data(kyc_email=email)
-    await message.answer(t["kyc_upload_ask"], reply_markup=get_cancel_kb(lang))
-    await state.set_state(UserStates.waiting_for_kyc_photo)
+    ask = t.get("kyc_passport_ask") or t["kyc_upload_ask"]
+    await message.answer(ask, reply_markup=get_cancel_kb(lang))
+    await state.set_state(UserStates.waiting_for_kyc_passport)
 
-@router.message(F.photo, StateFilter(UserStates.waiting_for_kyc_photo))
-async def process_kyc_photo(message: Message, state: FSMContext):
+
+@router.message(F.photo, StateFilter(UserStates.waiting_for_kyc_passport))
+async def process_kyc_passport(message: Message, state: FSMContext):
+    user_data = await get_user_data(message.from_user.id)
+    lang = user_data[0]
+    t = TEXTS[lang]
+    file_id = message.photo[-1].file_id
+    await state.update_data(kyc_passport_file_id=file_id)
+    msg = t.get("kyc_selfie_ask") or (
+        "اکنون یک سلفی واضح از چهره خود ارسال کنید." if lang == "fa" else "Now send a clear selfie of your face."
+    )
+    await message.answer(msg, reply_markup=get_cancel_kb(lang))
+    await state.set_state(UserStates.waiting_for_kyc_selfie)
+
+
+@router.message(F.photo, StateFilter(UserStates.waiting_for_kyc_selfie))
+async def process_kyc_selfie(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user_data = await get_user_data(user_id)
     lang, balance, kyc = user_data[0], user_data[4], user_data[1]
     t = TEXTS[lang]
     data = await state.get_data()
     email = data.get("kyc_email", "Not Set")
-
+    passport_id = data.get("kyc_passport_file_id")
+    selfie_id = message.photo[-1].file_id
     async with aiosqlite.connect(settings.db_name) as db:
         await db.execute("UPDATE users SET email = ? WHERE user_id = ?", (email, user_id))
+        try:
+            await db.execute(
+                """
+                INSERT INTO kyc_submissions (user_id, email, passport_file_id, selfie_file_id, status)
+                VALUES (?, ?, ?, ?, 'pending')
+                """,
+                (user_id, email, passport_id, selfie_id),
+            )
+        except Exception:
+            pass
         await db.commit()
-
-    await message.answer(t["kyc_pending_new"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id))
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ تأیید احراز", callback_data=f"adm_kyc_accept_{user_id}"),
-            InlineKeyboardButton(text="رد درخواست", callback_data=f"adm_kyc_reject_{user_id}")
-        ]
-    ])
+    await message.answer(
+        t.get("kyc_pending_new") or "Submitted for review.",
+        reply_markup=get_main_dashboard_kb(lang, balance, kyc, user_id == settings.admin_id, user_id=user_id),
+    )
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Approve L2", callback_data=f"adm_kyc_accept_{user_id}"),
+        InlineKeyboardButton(text="Reject", callback_data=f"adm_kyc_reject_{user_id}"),
+    ]])
     try:
+        cap = f"KYC L2\nUser: `{user_id}`\nEmail: `{email}`"
+        if passport_id:
+            await message.bot.send_photo(settings.admin_id, photo=passport_id, caption=cap + "\nPassport", parse_mode="Markdown")
         await message.bot.send_photo(
-            settings.admin_id,
-            photo=message.photo[-1].file_id,
-            caption=f"🛡 **درخواست KYC سطح ۲**\nUser: `{user_id}`\nEmail: `{email}`",
-            reply_markup=admin_kb,
-            parse_mode="Markdown"
+            settings.admin_id, photo=selfie_id, caption=cap + "\nSelfie",
+            reply_markup=admin_kb, parse_mode="Markdown",
         )
     except Exception:
         pass
-    await log_security_event(user_id, "KYC Submitted")
+    await log_security_event(user_id, "KYC passport+selfie")
     await state.clear()
+
+
+@router.message(F.photo, StateFilter(UserStates.waiting_for_kyc_photo))
+async def process_kyc_photo_legacy(message: Message, state: FSMContext):
+    await process_kyc_passport(message, state)
+
+
 
 @router.callback_query(F.data.startswith("adm_kyc_accept_"), StateFilter("*"))
 async def cb_admin_kyc_accept(callback: CallbackQuery):
