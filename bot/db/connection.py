@@ -151,7 +151,32 @@ async def init_db() -> None:
                 pass
         await db.execute(
             """
+            
+            CREATE TABLE IF NOT EXISTS kyc_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                email TEXT,
+                passport_file_id TEXT,
+                selfie_file_id TEXT,
+                status TEXT DEFAULT 'pending',
+                admin_note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TIMESTAMP
+            )
+            """
+        )
+        for _ddl in (
+            "ALTER TABLE users ADD COLUMN referral_code TEXT",
+            "ALTER TABLE users ADD COLUMN referral_count INTEGER DEFAULT 0",
+        ):
+            try:
+                await db.execute(_ddl)
+            except Exception:
+                pass
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS stakes (
+
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 amount REAL NOT NULL,
