@@ -923,7 +923,16 @@ async def api_referral_me(request: web.Request) -> web.Response:
         if row:
             count = row[0] or 0
             referrer_id = row[1]
-    return web.json_response({"ok": True, "code": code, "count": count, "referrer_id": referrer_id})
+    bot_user = (getattr(settings, "bot_username", None) or "").lstrip("@")
+    invite_link = f"https://t.me/{bot_user}?start={code}" if bot_user else ""
+    return web.json_response({
+        "ok": True,
+        "code": code,
+        "count": count,
+        "referrer_id": referrer_id,
+        "invite_link": invite_link,
+        "bot_username": bot_user,
+    })
 
 
 async def api_referral_apply(request: web.Request) -> web.Response:
