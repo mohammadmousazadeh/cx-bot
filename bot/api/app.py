@@ -888,6 +888,57 @@ async def api_admin_recent_tx(request: web.Request) -> web.Response:
         )).fetchall()
     return web.json_response({"ok": True, "items": [dict(r) for r in rows]})
 
+
+async def api_admin_kyc_submissions(request: web.Request) -> web.Response:
+    _require_admin(request)
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            rows = await (await db.execute(
+                """
+                SELECT id, user_id, email, status, created_at, passport_file_id, selfie_file_id
+                FROM kyc_submissions WHERE status='pending'
+                ORDER BY id DESC LIMIT 40
+                """
+            )).fetchall()
+        except Exception:
+            rows = []
+    return web.json_response({"ok": True, "items": [dict(r) for r in rows]})
+
+
+async def api_referral_me(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    from bot.db.users import ensure_referral_code
+    code = await ensure_referral_code(validated.user.id)
+    import aiosqlite
+    count = 0
+    referrer_id = None
+    async with aiosqlite.connect(settings.db_name) as db:
+        cur = await db.execute(
+            "SELECT referral_count, referrer_id FROM users WHERE user_id=?",
+            (validated.user.id,),
+        )
+        row = await cur.fetchone()
+        if row:
+            count = row[0] or 0
+            referrer_id = row[1]
+    return web.json_response({"ok": True, "code": code, "count": count, "referrer_id": referrer_id})
+
+
+async def api_referral_apply(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    try:
+        body = await request.json()
+        code = str(body.get("code") or "")
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    from bot.db.users import apply_referral_code
+    ok, reason = await apply_referral_code(validated.user.id, code)
+    if not ok:
+        raise web.HTTPBadRequest(text='{"error":"%s"}' % reason, content_type="application/json")
+    return web.json_response({"ok": True})
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -899,6 +950,9 @@ def create_api_app() -> web.Application:
     app.router.add_post("/api/admin/debit", api_admin_debit)
     app.router.add_post("/api/admin/toggle", api_admin_toggle)
     app.router.add_get("/api/admin/kyc", api_admin_kyc_list)
+    app.router.add_get("/api/admin/kyc-submissions", api_admin_kyc_submissions)
+    app.router.add_get("/api/referral/me", api_referral_me)
+    app.router.add_post("/api/referral/apply", api_referral_apply)
     app.router.add_post("/api/admin/kyc-set", api_admin_kyc_set)
     app.router.add_get("/api/admin/tickets", api_admin_tickets)
     app.router.add_post("/api/admin/ticket-close", api_admin_ticket_close)
