@@ -117,14 +117,36 @@ async def start_cmd(message: Message, state: FSMContext):
         if not row:
             lvl = 2 if user_id == settings.admin_id else 0
             referrer_id = None
-            if len(args) > 1 and args[1].isdigit() and int(args[1]) != user_id:
-                ref = int(args[1])
-                c_chk = await db.execute("SELECT join_date FROM users WHERE user_id = ?", (ref,))
-                if await c_chk.fetchone():
-                    referrer_id = ref
+            if len(args) > 1:
+                payload = args[1].strip()
+                if payload.isdigit() and int(payload) != user_id:
+                    ref = int(payload)
+                    c_chk = await db.execute("SELECT join_date FROM users WHERE user_id = ?", (ref,))
+                    if await c_chk.fetchone():
+                        referrer_id = ref
+                else:
+                    code = payload.upper().replace("REF_", "CX-")
+                    if not code.startswith("CX-") and len(code) >= 4:
+                        code = "CX-" + code
+                    c_chk = await db.execute(
+                        "SELECT user_id FROM users WHERE upper(COALESCE(referral_code,'')) = ? LIMIT 1",
+                        (code,),
+                    )
+                    row_ref = await c_chk.fetchone()
+                    if row_ref and int(row_ref[0]) != user_id:
+                        referrer_id = int(row_ref[0])
+                        await db.execute(
+                            "UPDATE users SET referral_count = COALESCE(referral_count, 0) + 1 WHERE user_id = ?",
+                            (referrer_id,),
+                        )
 
             await db.execute('INSERT INTO users (user_id, referrer_id, balance, kyc_level) VALUES (?, ?, ?, ?)', (user_id, referrer_id, 0.0, lvl))
             await db.commit()
+            try:
+                from bot.db.users import ensure_referral_code
+                await ensure_referral_code(user_id)
+            except Exception:
+                pass
             try:
                 await credit_ton(user_id, settings.welcome_bonus_ton, kind=TxKind.WELCOME_BONUS, meta="signup", idempotency_key=f"welcome:{user_id}")
             except Exception:
@@ -148,6 +170,11 @@ async def start_cmd(message: Message, state: FSMContext):
 
     t = TEXTS.get(lang, TEXTS["fa"])
     user_data = await get_user_data(user_id)
+    try:
+        from bot.db.users import ensure_referral_code
+        await ensure_referral_code(user_id)
+    except Exception:
+        pass
     await message.answer(t["dashboard_ready"], reply_markup=get_main_dashboard_kb(lang, user_data[4], user_data[1], user_id == settings.admin_id, user_id=user_id))
 
 @router.callback_query(F.data.startswith("setlang_"), StateFilter("*"))
@@ -182,6 +209,29 @@ async def phone_contact_handler(message: Message, state: FSMContext):
     async with aiosqlite.connect(settings.db_name) as db:
         await db.execute("UPDATE users SET phone = ?, kyc_level = 1 WHERE user_id = ?", (message.contact.phone_number, user_id))
         await db.commit()
+        # referral reward when invitee verifies phone (L1)
+        try:
+            cur_r = await db.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
+            rr = await cur_r.fetchone()
+            if rr and rr[0]:
+                reward = float(getattr(settings, "referral_l1_reward", 1.0) or 0)
+                if reward > 0:
+                    await credit_ton(
+                        int(rr[0]),
+                        reward,
+                        kind=TxKind.MISSION_REWARD,
+                        meta={"type": "referral_l1", "invitee": user_id, "amount": reward},
+                        idempotency_key=f"referral_l1:{user_id}",
+                    )
+                    try:
+                        await message.bot.send_message(
+                            int(rr[0]),
+                            f"Referral reward +{reward:g} TON (user {user_id} verified phone).",
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         
     await log_security_event(user_id, "Phone Verified")
     await message.answer(t["phone_saved_msg"], reply_markup=ReplyKeyboardRemove())
@@ -299,7 +349,20 @@ async def cb_admin_kyc_accept(callback: CallbackQuery):
     target_id = int(callback.data.split("_")[3])
     async with aiosqlite.connect(settings.db_name) as db:
         await db.execute("UPDATE users SET kyc_level = 2 WHERE user_id = ?", (target_id,))
+        try:
+            await db.execute(
+                "UPDATE kyc_submissions SET status='approved', reviewed_at=CURRENT_TIMESTAMP "
+                "WHERE user_id=? AND status='pending'",
+                (target_id,),
+            )
+        except Exception:
+            pass
         await db.commit()
+    try:
+        from bot.db.users import pay_referral_l2_reward
+        await pay_referral_l2_reward(target_id)
+    except Exception:
+        pass
     await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n✅ **تأیید شد.**", reply_markup=None)
     try:
         target_lang = (await get_user_data(target_id))[0]
