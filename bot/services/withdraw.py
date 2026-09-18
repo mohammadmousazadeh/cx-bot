@@ -41,3 +41,54 @@ async def try_auto_withdraw(request_id: int, amount: float, address: str) -> dic
     except (TonWalletNotConfigured, TonSendError) as exc:
         logger.warning("Auto-withdraw failed req=%s: %s", request_id, exc)
         return {"auto": False, "reason": "send_failed", "error": str(exc)}
+
+
+async def settle_withdraw_onchain(request_id: int) -> dict[str, Any]:
+    """Load pending withdraw, send TON on-chain if enabled, complete ledger."""
+    import aiosqlite
+
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT request_id, user_id, amount, address, status FROM requests WHERE request_id = ?",
+            (request_id,),
+        )
+        req = await cur.fetchone()
+    if not req:
+        return {"ok": False, "reason": "not_found"}
+    if req["status"] != "pending":
+        return {"ok": False, "reason": "status_%s" % req["status"]}
+
+    address = str(req["address"] or "")
+    amount = float(req["amount"] or 0)
+    tx_hash = None
+    onchain = False
+
+    if getattr(settings, "withdraw_onchain_enabled", True):
+        from bot.services.ton_chain import (
+            TonSendError,
+            TonWalletNotConfigured,
+            hot_wallet_configured,
+            send_ton,
+        )
+        if not hot_wallet_configured():
+            return {"ok": False, "reason": "no_hot_wallet"}
+        try:
+            tx_hash = await send_ton(address, amount, comment="cx_wd_%s" % request_id)
+            onchain = True
+        except TonWalletNotConfigured as exc:
+            return {"ok": False, "reason": "no_hot_wallet", "error": str(exc)}
+        except TonSendError as exc:
+            logger.warning("on-chain settle failed req=%s: %s", request_id, exc)
+            return {"ok": False, "reason": "send_failed", "error": str(exc)}
+    else:
+        tx_hash = "manual_%s" % request_id
+
+    await complete_withdraw(request_id, tx_hash=tx_hash)
+    return {
+        "ok": True,
+        "tx_hash": tx_hash,
+        "onchain": onchain,
+        "amount": amount,
+        "address": address,
+    }
