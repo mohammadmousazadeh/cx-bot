@@ -10,6 +10,51 @@ from bot.db.ledger import complete_withdraw, reject_withdraw
 logger = logging.getLogger("cx.withdraw")
 
 
+def withdraw_limits_for_kyc(kyc_level: int) -> dict[str, float]:
+    """Per-transaction limits by KYC level."""
+    lvl = int(kyc_level or 0)
+    min_ton = float(getattr(settings, "withdraw_min_ton", 1.0) or 1.0)
+    if lvl >= 2:
+        max_ton = float(getattr(settings, "withdraw_max_l2", 500.0) or 500.0)
+    elif lvl >= 1:
+        max_ton = float(getattr(settings, "withdraw_max_l1", 50.0) or 50.0)
+    else:
+        max_ton = float(getattr(settings, "withdraw_max_l0", 0.0) or 0.0)
+    return {"min": min_ton, "max": max_ton, "kyc_level": float(lvl)}
+
+
+def check_withdraw_amount(amount: float, kyc_level: int) -> dict[str, Any]:
+    """Return {ok:True} or {ok:False, error, min, max, kyc_level}."""
+    lim = withdraw_limits_for_kyc(kyc_level)
+    amt = float(amount or 0)
+    if lim["max"] <= 0:
+        return {
+            "ok": False,
+            "error": "kyc_required",
+            "min": lim["min"],
+            "max": lim["max"],
+            "kyc_level": int(lim["kyc_level"]),
+        }
+    if amt < lim["min"]:
+        return {
+            "ok": False,
+            "error": "below_min",
+            "min": lim["min"],
+            "max": lim["max"],
+            "kyc_level": int(lim["kyc_level"]),
+        }
+    if amt > lim["max"]:
+        return {
+            "ok": False,
+            "error": "above_kyc_max",
+            "min": lim["min"],
+            "max": lim["max"],
+            "kyc_level": int(lim["kyc_level"]),
+        }
+    return {"ok": True, "min": lim["min"], "max": lim["max"], "kyc_level": int(lim["kyc_level"])}
+
+
+
 async def try_auto_withdraw(request_id: int, amount: float, address: str) -> dict[str, Any]:
     """
     If enabled and amount <= AUTO_WITHDRAW_MAX and hot wallet ready,
