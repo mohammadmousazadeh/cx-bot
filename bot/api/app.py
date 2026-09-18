@@ -831,7 +831,29 @@ async def api_prop_history(request: web.Request) -> web.Response:
 
 
 
+async def api_withdraw_limits(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    import aiosqlite
+    kyc_level = 0
+    async with aiosqlite.connect(settings.db_name) as db:
+        row = await (await db.execute(
+            "SELECT kyc_level FROM users WHERE user_id=?", (validated.user.id,)
+        )).fetchone()
+        if row:
+            kyc_level = int(row[0] or 0)
+    from bot.services.withdraw import withdraw_limits_for_kyc
+    lim = withdraw_limits_for_kyc(kyc_level)
+    return web.json_response({
+        "ok": True,
+        "kyc_level": kyc_level,
+        "min": lim["min"],
+        "max": lim["max"],
+        "auto_max": float(getattr(settings, "auto_withdraw_max", 20) or 20),
+    })
+
+
 async def api_withdraw(request: web.Request) -> web.Response:
+
     """Create withdraw request: holds TON immediately, optional auto on-chain under threshold."""
     validated = _authenticate(request)
     try:
@@ -844,7 +866,23 @@ async def api_withdraw(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text='{"error":"invalid_amount"}', content_type="application/json")
     address = str(body.get("address") or "").strip()
     if amount < 1:
-        raise web.HTTPBadRequest(text='{"error":"min_withdraw_1"}', content_type="application/json")
+        raise web.HTTPBadRequest(text='{"error":"min_withdraw"}', content_type="application/json")
+    import aiosqlite
+    kyc_level = 0
+    async with aiosqlite.connect(settings.db_name) as db:
+        row = await (await db.execute(
+            "SELECT kyc_level FROM users WHERE user_id=?", (validated.user.id,)
+        )).fetchone()
+        if row:
+            kyc_level = int(row[0] or 0)
+    from bot.services.withdraw import check_withdraw_amount
+    lim = check_withdraw_amount(amount, kyc_level)
+    if not lim.get("ok"):
+        raise web.HTTPForbidden(
+            text='{"error":"%s","min":%s,"max":%s,"kyc_level":%s}'
+            % (lim.get("error"), lim.get("min"), lim.get("max"), lim.get("kyc_level")),
+            content_type="application/json",
+        )
     if len(address) < 20:
         raise web.HTTPBadRequest(text='{"error":"invalid_address"}', content_type="application/json")
     try:
@@ -1348,6 +1386,7 @@ def create_api_app() -> web.Application:
     app.router.add_post("/api/admin/backup", api_admin_backup_run)
     app.router.add_get("/api/me", api_me)
     app.router.add_get("/api/transactions", api_transactions)
+    app.router.add_get("/api/withdraw/limits", api_withdraw_limits)
     app.router.add_post("/api/withdraw", api_withdraw)
     app.router.add_post("/api/ping", api_ping)
     app.router.add_get("/api/binary/config", api_binary_config)
