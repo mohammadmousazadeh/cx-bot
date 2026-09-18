@@ -1377,6 +1377,64 @@ async def api_balances(request: web.Request) -> web.Response:
         "ETH": float(row["eth_balance"] or 0),
     })
 
+
+async def api_admin_metrics(request: web.Request) -> web.Response:
+    """Advanced ops dashboard data for admin."""
+    _require_admin(request)
+    import aiosqlite
+    from pathlib import Path as _P
+    from bot.services.monitoring import snapshot
+    from bot.workers.backup import list_backups
+    from bot.services.ton_chain import hot_wallet_configured
+
+    stats = {
+        "users": 0,
+        "balance_ton_sum": 0.0,
+        "open_binary": 0,
+        "pending_withdraws": 0,
+        "pending_withdraw_ton": 0.0,
+        "kyc_l1": 0,
+        "kyc_l2": 0,
+    }
+    try:
+        async with aiosqlite.connect(settings.db_name) as db:
+            stats["users"] = int((await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0] or 0)
+            row = await (await db.execute("SELECT COALESCE(SUM(balance),0) FROM users")).fetchone()
+            stats["balance_ton_sum"] = float(row[0] or 0)
+            try:
+                stats["open_binary"] = int((await (await db.execute(
+                    "SELECT COUNT(*) FROM binary_trades WHERE status='open'"
+                )).fetchone())[0] or 0)
+            except Exception:
+                pass
+            row = await (await db.execute(
+                "SELECT COUNT(*), COALESCE(SUM(amount),0) FROM requests WHERE req_type='withdraw' AND status='pending'"
+            )).fetchone()
+            stats["pending_withdraws"] = int(row[0] or 0)
+            stats["pending_withdraw_ton"] = float(row[1] or 0)
+            stats["kyc_l1"] = int((await (await db.execute(
+                "SELECT COUNT(*) FROM users WHERE kyc_level=1"
+            )).fetchone())[0] or 0)
+            stats["kyc_l2"] = int((await (await db.execute(
+                "SELECT COUNT(*) FROM users WHERE kyc_level>=2"
+            )).fetchone())[0] or 0)
+    except Exception as exc:
+        logger.exception("metrics db failed")
+        stats["error"] = str(exc)
+
+    db_path = _P(settings.db_name)
+    db_size = db_path.stat().st_size if db_path.exists() else 0
+    return web.json_response({
+        "ok": True,
+        "db_engine": "postgres" if settings.database_url else "sqlite",
+        "db_name": settings.db_name,
+        "db_size_bytes": db_size,
+        "hot_wallet_configured": hot_wallet_configured(),
+        "backups": list_backups(5),
+        "runtime": snapshot(),
+        "stats": stats,
+    })
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -1400,6 +1458,7 @@ def create_api_app() -> web.Application:
 
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/admin/backups", api_admin_backup_list)
+    app.router.add_get("/api/admin/metrics", api_admin_metrics)
     app.router.add_post("/api/admin/backup", api_admin_backup_run)
     app.router.add_get("/api/me", api_me)
     app.router.add_get("/api/balances", api_balances)
