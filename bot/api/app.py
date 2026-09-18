@@ -166,6 +166,8 @@ async def health(_request: web.Request) -> web.Response:
         "withdraw_onchain_enabled": getattr(_s, "withdraw_onchain_enabled", False),
         "hot_wallet_configured": hot,
         "backup_enabled": getattr(_s, "backup_enabled", False),
+        "backup_dir": getattr(_s, "backup_dir", "backups"),
+        "db_name": getattr(_s, "db_name", ""),
         "database_url_set": bool(getattr(_s, "database_url", "")),
     })
 
@@ -1305,6 +1307,21 @@ async def api_kyc_submit(request: web.Request) -> web.Response:
 
     return web.json_response({"ok": True, "status": "pending"})
 
+
+async def api_admin_backup_list(request: web.Request) -> web.Response:
+    _require_admin(request)
+    from bot.workers.backup import list_backups
+    return web.json_response({"ok": True, "items": list_backups(30)})
+
+
+async def api_admin_backup_run(request: web.Request) -> web.Response:
+    _require_admin(request)
+    from bot.workers.backup import run_backup_once
+    res = await run_backup_once()
+    if not res.get("ok"):
+        raise web.HTTPBadRequest(text='{"error":"%s"}' % (res.get("error") or "backup_failed"), content_type="application/json")
+    return web.json_response(res)
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -1327,6 +1344,8 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/admin/transactions", api_admin_recent_tx)
 
     app.router.add_get("/api/health", health)
+    app.router.add_get("/api/admin/backups", api_admin_backup_list)
+    app.router.add_post("/api/admin/backup", api_admin_backup_run)
     app.router.add_get("/api/me", api_me)
     app.router.add_get("/api/transactions", api_transactions)
     app.router.add_post("/api/withdraw", api_withdraw)
