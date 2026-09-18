@@ -841,13 +841,17 @@ async def api_withdraw_limits(request: web.Request) -> web.Response:
         )).fetchone()
         if row:
             kyc_level = int(row[0] or 0)
-    from bot.services.withdraw import withdraw_limits_for_kyc
+    from bot.services.withdraw import withdraw_limits_for_kyc, get_withdraw_used_today
     lim = withdraw_limits_for_kyc(kyc_level)
+    used = await get_withdraw_used_today(validated.user.id)
     return web.json_response({
         "ok": True,
         "kyc_level": kyc_level,
         "min": lim["min"],
         "max": lim["max"],
+        "daily_max": lim.get("daily_max", 0),
+        "used_today": used,
+        "remaining_today": max(0.0, float(lim.get("daily_max", 0)) - used),
         "auto_max": float(getattr(settings, "auto_withdraw_max", 20) or 20),
     })
 
@@ -875,8 +879,9 @@ async def api_withdraw(request: web.Request) -> web.Response:
         )).fetchone()
         if row:
             kyc_level = int(row[0] or 0)
-    from bot.services.withdraw import check_withdraw_amount
-    lim = check_withdraw_amount(amount, kyc_level)
+    from bot.services.withdraw import check_withdraw_amount, get_withdraw_used_today
+    used = await get_withdraw_used_today(validated.user.id)
+    lim = check_withdraw_amount(amount, kyc_level, used_today=used)
     if not lim.get("ok"):
         raise web.HTTPForbidden(
             text='{"error":"%s","min":%s,"max":%s,"kyc_level":%s}'
@@ -1140,6 +1145,14 @@ async def api_admin_kyc_set(request: web.Request) -> web.Response:
         try:
             from bot.db.users import pay_referral_l2_reward
             paid = await pay_referral_l2_reward(uid)
+            try:
+                from aiogram import Bot
+                from bot.services.notify import notify_kyc_result
+                _b = Bot(token=settings.bot_token)
+                await notify_kyc_result(_b, uid, approved=(level >= 2), level=level)
+                await _b.session.close()
+            except Exception:
+                logger.exception("kyc notify failed")
         except Exception:
             logger.exception("referral l2 reward failed")
     return web.json_response({"ok": True, "user_id": uid, "kyc_level": level, "referral_l2_paid": paid})
@@ -1360,6 +1373,28 @@ async def api_admin_backup_run(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text='{"error":"%s"}' % (res.get("error") or "backup_failed"), content_type="application/json")
     return web.json_response(res)
 
+
+async def api_balances(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute(
+            "SELECT balance, usdt_balance, "
+            "COALESCE(btc_balance,0) as btc_balance, COALESCE(eth_balance,0) as eth_balance "
+            "FROM users WHERE user_id=?",
+            (validated.user.id,),
+        )).fetchone()
+    if not row:
+        return web.json_response({"ok": True, "TON": 0, "USDT": 0, "BTC": 0, "ETH": 0})
+    return web.json_response({
+        "ok": True,
+        "TON": float(row["balance"] or 0),
+        "USDT": float(row["usdt_balance"] or 0),
+        "BTC": float(row["btc_balance"] or 0),
+        "ETH": float(row["eth_balance"] or 0),
+    })
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -1385,6 +1420,7 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/admin/backups", api_admin_backup_list)
     app.router.add_post("/api/admin/backup", api_admin_backup_run)
     app.router.add_get("/api/me", api_me)
+    app.router.add_get("/api/balances", api_balances)
     app.router.add_get("/api/transactions", api_transactions)
     app.router.add_get("/api/withdraw/limits", api_withdraw_limits)
     app.router.add_post("/api/withdraw", api_withdraw)
