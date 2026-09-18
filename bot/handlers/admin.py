@@ -479,11 +479,18 @@ async def cb_wd_ok(callback: CallbackQuery):
     rid = int(callback.data.split("_")[-1])
     t = _t(callback.from_user.id)
     try:
-        await complete_withdraw(rid, tx_hash=f"admin_{rid}")
-        await callback.message.edit_text((callback.message.text or "") + f"\n\n{_t(callback.from_user.id)['approved']}")
-        await callback.answer(t["approved"])
+        from bot.services.withdraw import settle_withdraw_onchain
+        await callback.answer("Sending…" if _lang(callback.from_user.id) == "en" else "در حال ارسال…")
+        res = await settle_withdraw_onchain(rid)
+        if not res.get("ok"):
+            return await callback.answer(str(res.get("error") or res.get("reason")), show_alert=True)
+        note = res.get("tx_hash") or ""
+        await callback.message.edit_text(
+            (callback.message.text or "") + "\n\n" + t["approved"] + "\n`" + str(note) + "`"
+        )
     except Exception as e:
         await callback.answer(str(e), show_alert=True)
+
 
 
 @router.callback_query(F.data.startswith("adm_wd_no_"), StateFilter("*"))
