@@ -132,6 +132,13 @@ async def try_auto_withdraw(request_id: int, amount: float, address: str) -> dic
         return {"auto": True, "tx_hash": tx_hash}
     except (TonWalletNotConfigured, TonSendError) as exc:
         logger.warning("Auto-withdraw failed req=%s: %s", request_id, exc)
+        try:
+            from bot.services.ton_chain import _admin_chain_alert
+            await _admin_chain_alert(
+                "auto-withdraw failed req=%s amount=%s error=%s" % (request_id, amount, exc)
+            )
+        except Exception:
+            pass
         return {"auto": False, "reason": "send_failed", "error": str(exc)}
 
 
@@ -172,6 +179,13 @@ async def settle_withdraw_onchain(request_id: int) -> dict[str, Any]:
             return {"ok": False, "reason": "no_hot_wallet", "error": str(exc)}
         except TonSendError as exc:
             logger.warning("on-chain settle failed req=%s: %s", request_id, exc)
+            try:
+                from bot.services.ton_chain import _admin_chain_alert
+                await _admin_chain_alert(
+                    "settle on-chain failed req=%s error=%s" % (request_id, exc)
+                )
+            except Exception:
+                pass
             return {"ok": False, "reason": "send_failed", "error": str(exc)}
     else:
         tx_hash = "manual_%s" % request_id
