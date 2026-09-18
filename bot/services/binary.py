@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # MVP config
 DEFAULT_SYMBOL = "BTCUSDT"
 DEFAULT_PAYOUT_RATE = 1.80
-ALLOWED_DURATIONS = {30, 60, 120, 300}
+ALLOWED_DURATIONS = {15, 30, 60, 120, 300, 900}
 MIN_AMOUNT = 1.0
 MAX_AMOUNT = 50.0
 ALLOWED_DIRECTIONS = {"up", "down"}
@@ -36,7 +36,7 @@ class BinaryConfig:
     payout_rate: float = DEFAULT_PAYOUT_RATE
     min_amount: float = MIN_AMOUNT
     max_amount: float = MAX_AMOUNT
-    durations_sec: tuple[int, ...] = (30, 60, 120, 300)
+    durations_sec: tuple[int, ...] = (15, 30, 60, 120, 300, 900)
 
 
 def get_config() -> dict[str, Any]:
