@@ -413,6 +413,74 @@ async def api_swap_ton_usdt(request: web.Request) -> web.Response:
         raise web.HTTPInternalServerError(text='{"error":"server_error"}', content_type="application/json")
 
 
+
+async def api_swap_history(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    try:
+        limit = min(int(request.query.get("limit", "20")), 50)
+    except ValueError:
+        limit = 20
+    import aiosqlite, json
+    items = []
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            """
+            SELECT id, kind, amount, currency, balance_after, meta, created_at
+            FROM transactions
+            WHERE user_id = ?
+              AND kind IN ('swap_ton_out','swap_usdt_out','swap_usdt_in','swap_ton_in')
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (validated.user.id, limit),
+        )).fetchall()
+    for r in rows:
+        meta = {}
+        raw = r["meta"]
+        if raw:
+            try:
+                meta = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except Exception:
+                meta = {}
+        kind = r["kind"]
+        if kind == "swap_ton_out":
+            pair = meta.get("pair") or "TON/USDT"
+            amount_in = abs(float(r["amount"] or 0))
+            amount_out = float(meta.get("usdt_received") or 0)
+            fee = float(meta.get("fee_ton") or 0)
+            fee_asset = "TON"
+            rate = float(meta.get("rate") or 0)
+        elif kind == "swap_usdt_out":
+            pair = meta.get("pair") or "USDT/TON"
+            amount_in = abs(float(r["amount"] or 0))
+            amount_out = float(meta.get("ton_received") or 0)
+            fee = float(meta.get("fee_usdt") or 0)
+            fee_asset = "USDT"
+            rate = float(meta.get("rate") or 0)
+            if rate:
+                rate = 1.0 / rate  # display as USDT->TON units optional
+        else:
+            pair = meta.get("pair") or kind
+            amount_in = abs(float(r["amount"] or 0))
+            amount_out = 0
+            fee = 0
+            fee_asset = r["currency"] or ""
+            rate = float(meta.get("rate") or 0)
+        items.append({
+            "id": r["id"],
+            "kind": kind,
+            "pair": pair,
+            "amount_in": amount_in,
+            "amount_out": amount_out,
+            "fee": fee,
+            "fee_asset": fee_asset,
+            "rate": rate,
+            "currency": r["currency"],
+            "created_at": r["created_at"],
+        })
+    return web.json_response({"ok": True, "items": items})
+
 async def api_swap_execute(request: web.Request) -> web.Response:
     """Execute TON↔USDT ledger swap."""
     validated = _authenticate(request)
@@ -433,6 +501,35 @@ async def api_swap_execute(request: web.Request) -> web.Response:
         raise web.HTTPServiceUnavailable(
             text='{"error":"price_unavailable"}', content_type="application/json"
         )
+
+    # Slippage protection: optional quoted_rate + max_slippage_bps from client
+    try:
+        quoted_rate = body.get("quoted_rate")
+        max_slip_bps = int(body.get("max_slippage_bps") or 50)  # default 0.50%
+    except Exception:
+        quoted_rate, max_slip_bps = None, 50
+    max_slip_bps = max(1, min(max_slip_bps, 500))
+    if quoted_rate is not None:
+        try:
+            qrate = float(quoted_rate)
+        except Exception:
+            qrate = 0.0
+        if qrate > 0:
+            # Compare executable rate in "dst per 1 src" terms
+            if src == "TON" and dst == "USDT":
+                exec_rate = float(rate_raw)
+            else:
+                exec_rate = 1.0 / float(rate_raw)
+            # For user selling src: worse rate = lower exec_rate vs quote
+            move_bps = abs(exec_rate - qrate) / qrate * 10000.0
+            # Only reject adverse moves beyond tolerance
+            adverse = exec_rate < qrate * (1 - max_slip_bps / 10000.0)
+            if adverse:
+                raise web.HTTPConflict(
+                    text='{"error":"slippage","detail":"rate moved beyond tolerance","quoted":%s,"exec":%s}'
+                    % (qrate, exec_rate),
+                    content_type="application/json",
+                )
 
     try:
         if src == "TON" and dst == "USDT":
@@ -1222,6 +1319,7 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/swap/quote", api_swap_quote)
     app.router.add_post("/api/swap/ton-usdt", api_swap_ton_usdt)
     app.router.add_post("/api/swap/execute", api_swap_execute)
+    app.router.add_get("/api/swap/history", api_swap_history)
     app.router.add_get("/api/prop/status", api_prop_status)
     app.router.add_post("/api/prop/start", api_prop_start)
     app.router.add_post("/api/prop/trade", api_prop_trade)
