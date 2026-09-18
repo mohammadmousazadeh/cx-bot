@@ -310,6 +310,11 @@ async def send_ton(
         logger.exception("send_ton failed")
         try:
             await _admin_chain_alert("send_ton failed: %s" % exc)
+            try:
+                from bot.services.monitoring import record_chain_error
+                record_chain_error("send_ton", str(exc))
+            except Exception:
+                pass
         except Exception:
             pass
         raise TonSendError(str(exc)) from exc
