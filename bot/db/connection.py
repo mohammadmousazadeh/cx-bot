@@ -318,3 +318,4 @@ async def init_db() -> None:
             (str(SCHEMA_VERSION),),
         )
         await db.commit()
+
