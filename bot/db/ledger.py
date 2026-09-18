@@ -994,3 +994,91 @@ async def claim_prop_reward(user_id: int) -> dict:
         "status": "paid",
         "balance_ton": result.ton_balance,
     }
+
+
+async def get_all_balances(user_id: int) -> dict[str, float]:
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT balance, usdt_balance,
+                   COALESCE(btc_balance, 0), COALESCE(eth_balance, 0)
+            FROM users WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        row = await cur.fetchone()
+    if not row:
+        return {"TON": 0.0, "USDT": 0.0, "BTC": 0.0, "ETH": 0.0}
+    return {
+        "TON": float(row[0] or 0),
+        "USDT": float(row[1] or 0),
+        "BTC": float(row[2] or 0),
+        "ETH": float(row[3] or 0),
+    }
+
+
+async def swap_assets(
+    user_id: int,
+    src: str,
+    dst: str,
+    amount_in: float,
+    *,
+    rate: float,
+    fee_in: float,
+) -> dict[str, float]:
+    """
+    Internal multi-asset swap among TON, USDT, BTC, ETH.
+    amount_in is gross; fee_in deducted from source; net * rate = dst credit.
+    """
+    src = src.upper()
+    dst = dst.upper()
+    allowed = {"TON", "USDT", "BTC", "ETH"}
+    if src not in allowed or dst not in allowed or src == dst:
+        raise InvalidAmount("unsupported_pair")
+    if amount_in <= 0 or rate <= 0:
+        raise InvalidAmount("invalid_swap")
+    net = amount_in - fee_in
+    if net <= 0:
+        raise InvalidAmount("amount_too_small")
+    out = net * rate
+
+    col = {
+        "TON": "balance",
+        "USDT": "usdt_balance",
+        "BTC": "btc_balance",
+        "ETH": "eth_balance",
+    }
+    async with get_db() as db:
+        cur = await db.execute(
+            f"SELECT {col[src]}, {col[dst]} FROM users WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise InsufficientBalance("user not found")
+        bal_src = float(row[0] or 0)
+        bal_dst = float(row[1] or 0)
+        if bal_src + 1e-12 < amount_in:
+            raise InsufficientBalance("insufficient_balance")
+        new_src = bal_src - amount_in
+        new_dst = bal_dst + out
+        await db.execute(
+            f"UPDATE users SET {col[src]} = ?, {col[dst]} = ? WHERE user_id = ?",
+            (new_src, new_dst, user_id),
+        )
+        meta = json.dumps({
+            "pair": f"{src}/{dst}",
+            "rate": rate,
+            "fee": fee_in,
+            "amount_in": amount_in,
+            "amount_out": out,
+        })
+        await db.execute(
+            """
+            INSERT INTO transactions (user_id, kind, amount, currency, balance_after, meta)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, f"swap_{src.lower()}_out", -amount_in, src, new_src, meta),
+        )
+        await db.commit()
+    return await get_all_balances(user_id)
