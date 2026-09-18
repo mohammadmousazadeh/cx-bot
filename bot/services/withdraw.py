@@ -129,6 +129,11 @@ async def try_auto_withdraw(request_id: int, amount: float, address: str) -> dic
         tx_hash = await send_ton(str(address), float(amount), comment=f"cx_wd_{request_id}")
         await complete_withdraw(request_id, tx_hash=tx_hash)
         logger.info("Auto-withdraw completed req=%s amount=%s tx=%s", request_id, amount, tx_hash)
+        try:
+            from bot.services.monitoring import bump
+            bump("withdraw_auto_ok")
+        except Exception:
+            pass
         return {"auto": True, "tx_hash": tx_hash}
     except (TonWalletNotConfigured, TonSendError) as exc:
         logger.warning("Auto-withdraw failed req=%s: %s", request_id, exc)
@@ -137,6 +142,12 @@ async def try_auto_withdraw(request_id: int, amount: float, address: str) -> dic
             await _admin_chain_alert(
                 "auto-withdraw failed req=%s amount=%s error=%s" % (request_id, amount, exc)
             )
+        except Exception:
+            pass
+        try:
+            from bot.services.monitoring import bump, record_chain_error
+            bump("withdraw_auto_fail")
+            record_chain_error("auto_withdraw", str(exc))
         except Exception:
             pass
         return {"auto": False, "reason": "send_failed", "error": str(exc)}
