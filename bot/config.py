@@ -76,6 +76,9 @@ class Settings:
     withdraw_max_l0: float = 0.0
     withdraw_max_l1: float = 50.0
     withdraw_max_l2: float = 500.0
+    withdraw_daily_max_l0: float = 0.0
+    withdraw_daily_max_l1: float = 100.0
+    withdraw_daily_max_l2: float = 1000.0
     backup_enabled: bool = True
     backup_interval_sec: float = 3600.0
     backup_dir: str = "backups"
@@ -163,6 +166,9 @@ def load_settings() -> Settings:
         withdraw_max_l0=float(os.getenv("WITHDRAW_MAX_L0", "0")),
         withdraw_max_l1=float(os.getenv("WITHDRAW_MAX_L1", "50")),
         withdraw_max_l2=float(os.getenv("WITHDRAW_MAX_L2", "500")),
+        withdraw_daily_max_l0=float(os.getenv("WITHDRAW_DAILY_MAX_L0", "0")),
+        withdraw_daily_max_l1=float(os.getenv("WITHDRAW_DAILY_MAX_L1", "100")),
+        withdraw_daily_max_l2=float(os.getenv("WITHDRAW_DAILY_MAX_L2", "1000")),
         backup_enabled=_bool(os.getenv("BACKUP_ENABLED"), True),
         backup_interval_sec=float(os.getenv("BACKUP_INTERVAL_SEC", "3600")),
         backup_dir=os.getenv("BACKUP_DIR", "backups").strip(),
