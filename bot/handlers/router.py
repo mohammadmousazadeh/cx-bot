@@ -915,7 +915,29 @@ async def process_with_amount(message: Message, state: FSMContext):
         
     try:
         amount = float(message.text)
-        if amount < 150: return await message.answer(t["err_with_min"])
+        from bot.services.withdraw import check_withdraw_amount
+        lim = check_withdraw_amount(amount, int(kyc or 0))
+        if not lim.get("ok"):
+            err = lim.get("error")
+            if err == "kyc_required":
+                return await message.answer(
+                    "KYC required for withdraw. Complete phone verification at least (L1)."
+                    if lang == "en"
+                    else "برای برداشت حداقل تأیید تلفن (سطح ۱) لازم است."
+                )
+            if err == "below_min":
+                return await message.answer(
+                    ("Minimum withdraw: %s TON" % lim["min"])
+                    if lang == "en"
+                    else ("حداقل برداشت: %s TON" % lim["min"])
+                )
+            if err == "above_kyc_max":
+                return await message.answer(
+                    ("Max for your KYC L%s: %s TON" % (int(lim["kyc_level"]), lim["max"]))
+                    if lang == "en"
+                    else ("سقف سطح KYC شما (L%s): %s TON" % (int(lim["kyc_level"]), lim["max"]))
+                )
+            return await message.answer(str(err))
         if balance < amount: return await message.answer(t["insufficient_bal"])
         
         await state.update_data(with_amount=amount)
