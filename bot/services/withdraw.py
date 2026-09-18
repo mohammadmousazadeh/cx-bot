@@ -11,28 +11,52 @@ logger = logging.getLogger("cx.withdraw")
 
 
 def withdraw_limits_for_kyc(kyc_level: int) -> dict[str, float]:
-    """Per-transaction limits by KYC level."""
+    """Per-transaction and daily limits by KYC level."""
     lvl = int(kyc_level or 0)
     min_ton = float(getattr(settings, "withdraw_min_ton", 1.0) or 1.0)
     if lvl >= 2:
         max_ton = float(getattr(settings, "withdraw_max_l2", 500.0) or 500.0)
+        daily = float(getattr(settings, "withdraw_daily_max_l2", 1000.0) or 1000.0)
     elif lvl >= 1:
         max_ton = float(getattr(settings, "withdraw_max_l1", 50.0) or 50.0)
+        daily = float(getattr(settings, "withdraw_daily_max_l1", 100.0) or 100.0)
     else:
         max_ton = float(getattr(settings, "withdraw_max_l0", 0.0) or 0.0)
-    return {"min": min_ton, "max": max_ton, "kyc_level": float(lvl)}
+        daily = float(getattr(settings, "withdraw_daily_max_l0", 0.0) or 0.0)
+    return {"min": min_ton, "max": max_ton, "daily_max": daily, "kyc_level": float(lvl)}
 
 
-def check_withdraw_amount(amount: float, kyc_level: int) -> dict[str, Any]:
-    """Return {ok:True} or {ok:False, error, min, max, kyc_level}."""
+async def get_withdraw_used_today(user_id: int) -> float:
+    """Sum of withdraw requests created today (UTC) that are not rejected."""
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        cur = await db.execute(
+            """
+            SELECT COALESCE(SUM(amount), 0) FROM requests
+            WHERE user_id = ?
+              AND req_type = 'withdraw'
+              AND status != 'rejected'
+              AND date(created_at) = date('now')
+            """,
+            (user_id,),
+        )
+        row = await cur.fetchone()
+    return float(row[0] or 0) if row else 0.0
+
+
+def check_withdraw_amount(amount: float, kyc_level: int, *, used_today: float = 0.0) -> dict[str, Any]:
+    """Return {ok:True} or {ok:False, error, min, max, daily_max, used_today, kyc_level}."""
     lim = withdraw_limits_for_kyc(kyc_level)
     amt = float(amount or 0)
-    if lim["max"] <= 0:
+    used = float(used_today or 0)
+    if lim["max"] <= 0 or lim.get("daily_max", 0) <= 0:
         return {
             "ok": False,
             "error": "kyc_required",
             "min": lim["min"],
             "max": lim["max"],
+            "daily_max": lim.get("daily_max", 0),
+            "used_today": used,
             "kyc_level": int(lim["kyc_level"]),
         }
     if amt < lim["min"]:
@@ -41,6 +65,8 @@ def check_withdraw_amount(amount: float, kyc_level: int) -> dict[str, Any]:
             "error": "below_min",
             "min": lim["min"],
             "max": lim["max"],
+            "daily_max": lim["daily_max"],
+            "used_today": used,
             "kyc_level": int(lim["kyc_level"]),
         }
     if amt > lim["max"]:
@@ -49,9 +75,30 @@ def check_withdraw_amount(amount: float, kyc_level: int) -> dict[str, Any]:
             "error": "above_kyc_max",
             "min": lim["min"],
             "max": lim["max"],
+            "daily_max": lim["daily_max"],
+            "used_today": used,
             "kyc_level": int(lim["kyc_level"]),
         }
-    return {"ok": True, "min": lim["min"], "max": lim["max"], "kyc_level": int(lim["kyc_level"])}
+    if used + amt > lim["daily_max"] + 1e-9:
+        return {
+            "ok": False,
+            "error": "daily_limit",
+            "min": lim["min"],
+            "max": lim["max"],
+            "daily_max": lim["daily_max"],
+            "used_today": used,
+            "remaining_today": max(0.0, lim["daily_max"] - used),
+            "kyc_level": int(lim["kyc_level"]),
+        }
+    return {
+        "ok": True,
+        "min": lim["min"],
+        "max": lim["max"],
+        "daily_max": lim["daily_max"],
+        "used_today": used,
+        "remaining_today": max(0.0, lim["daily_max"] - used),
+        "kyc_level": int(lim["kyc_level"]),
+    }
 
 
 
