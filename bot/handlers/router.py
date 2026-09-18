@@ -915,8 +915,9 @@ async def process_with_amount(message: Message, state: FSMContext):
         
     try:
         amount = float(message.text)
-        from bot.services.withdraw import check_withdraw_amount
-        lim = check_withdraw_amount(amount, int(kyc or 0))
+        from bot.services.withdraw import check_withdraw_amount, get_withdraw_used_today
+        used = await get_withdraw_used_today(message.from_user.id)
+        lim = check_withdraw_amount(amount, int(kyc or 0), used_today=used)
         if not lim.get("ok"):
             err = lim.get("error")
             if err == "kyc_required":
@@ -936,6 +937,12 @@ async def process_with_amount(message: Message, state: FSMContext):
                     ("Max for your KYC L%s: %s TON" % (int(lim["kyc_level"]), lim["max"]))
                     if lang == "en"
                     else ("سقف سطح KYC شما (L%s): %s TON" % (int(lim["kyc_level"]), lim["max"]))
+                )
+            if err == "daily_limit":
+                return await message.answer(
+                    ("Daily limit reached. Used %s / %s TON today." % (lim.get("used_today"), lim.get("daily_max")))
+                    if lang == "en"
+                    else ("سقف روزانه پر شده. امروز %s از %s TON." % (lim.get("used_today"), lim.get("daily_max")))
                 )
             return await message.answer(str(err))
         if balance < amount: return await message.answer(t["insufficient_bal"])
