@@ -19,8 +19,9 @@ from typing import Optional
 from aiohttp import web
 
 from bot.config import settings
+# swap markets loaded below
 from bot.db import get_user_data, init_db
-from bot.db.ledger import list_transactions
+from bot.db.ledger import list_transactions, swap_assets, get_all_balances
 from bot.services.binary import (
     get_config as binary_get_config,
     open_binary_trade,
@@ -151,7 +152,8 @@ def _require_admin(request: web.Request):
 
 
 async def health(_request: web.Request) -> web.Response:
-    from bot.config import settings as _s
+    from bot.config import settings
+# swap markets loaded below as _s
     hot = False
     try:
         from bot.services.ton_chain import hot_wallet_configured
@@ -169,6 +171,8 @@ async def health(_request: web.Request) -> web.Response:
         "backup_dir": getattr(_s, "backup_dir", "backups"),
         "db_name": getattr(_s, "db_name", ""),
         "database_url_set": bool(getattr(_s, "database_url", "")),
+        "db_engine": "postgres" if getattr(_s, "database_url", "") else "sqlite",
+        "note": "Production path is SQLite on volume; set DATABASE_URL only after full Postgres migration.",
     })
 
 
@@ -314,59 +318,83 @@ async def api_binary_klines(request: web.Request) -> web.Response:
 
 
 
+
+# Internal swap pairs: from/to -> (market_symbol, invert_rate?)
+# rate = dst per 1 src
+_SWAP_MARKETS = {
+    ("TON", "USDT"): ("TONUSDT", False),
+    ("USDT", "TON"): ("TONUSDT", True),
+    ("BTC", "USDT"): ("BTCUSDT", False),
+    ("USDT", "BTC"): ("BTCUSDT", True),
+    ("ETH", "USDT"): ("ETHUSDT", False),
+    ("USDT", "ETH"): ("ETHUSDT", True),
+    ("BTC", "TON"): ("BTCUSDT", "TONUSDT"),  # special cross via USDT
+    ("TON", "BTC"): ("TONUSDT", "BTCUSDT"),
+    ("ETH", "TON"): ("ETHUSDT", "TONUSDT"),
+    ("TON", "ETH"): ("TONUSDT", "ETHUSDT"),
+    ("BTC", "ETH"): ("BTCUSDT", "ETHUSDT"),
+    ("ETH", "BTC"): ("ETHUSDT", "BTCUSDT"),
+}
+
+async def _swap_rate(src: str, dst: str) -> float | None:
+    """Return how many dst tokens for 1 src token."""
+    src, dst = src.upper(), dst.upper()
+    if src == dst:
+        return 1.0
+    key = (src, dst)
+    if key not in _SWAP_MARKETS:
+        return None
+    spec = _SWAP_MARKETS[key]
+    if len(spec) == 2 and isinstance(spec[1], bool):
+        sym, inv = spec
+        px = await get_market_price(sym)
+        if not px:
+            return None
+        return (1.0 / float(px)) if inv else float(px)
+    # cross via USDT
+    sym_a, sym_b = spec
+    # src->USDT and USDT->dst
+    if src == "USDT":
+        px = await get_market_price(sym_b if dst != "USDT" else sym_a)
+        return (1.0 / float(px)) if px else None
+    if dst == "USDT":
+        px = await get_market_price(sym_a if src != "USDT" else sym_b)
+        return float(px) if px else None
+    px_src = await get_market_price(sym_a)  # src in USDT
+    px_dst = await get_market_price(sym_b)  # dst in USDT
+    if not px_src or not px_dst:
+        return None
+    # 1 src = px_src USDT; 1 dst = px_dst USDT → dst per src = px_src/px_dst
+    return float(px_src) / float(px_dst)
+
 async def api_swap_quote(request: web.Request) -> web.Response:
-    """Quote for supported ledger pairs. Auth required."""
+    """Quote for TON/USDT/BTC/ETH pairs."""
     validated = _authenticate(request)
     src = (request.query.get("from") or request.query.get("src") or "TON").upper()
     dst = (request.query.get("to") or request.query.get("dst") or "USDT").upper()
     fee_bps = 30
-    pairs = {
-        ("TON", "USDT"): ("TONUSDT", "ton", "usdt"),
-        ("USDT", "TON"): ("TONUSDT", "usdt", "ton"),
-    }
-    if (src, dst) not in pairs:
-        raise web.HTTPBadRequest(
-            text='{"error":"unsupported_pair","detail":"Supported: TON↔USDT"}',
-            content_type="application/json",
-        )
-    symbol, base, quote = pairs[(src, dst)]
-    price = await get_market_price(symbol)
-    if not price or price <= 0:
-        raise web.HTTPServiceUnavailable(
-            text='{"error":"price_unavailable"}', content_type="application/json"
-        )
-    # rate = how many dst per 1 src
-    if src == "TON" and dst == "USDT":
-        rate = float(price)
-        min_in, max_in = 0.5, 500.0
-    else:
-        rate = 1.0 / float(price)
-        min_in, max_in = 1.0, 2000.0
-    # balances
-    ton_b = usdt_b = 0.0
+    rate = await _swap_rate(src, dst)
+    if not rate or rate <= 0:
+        raise web.HTTPServiceUnavailable(text='{"error":"price_unavailable"}', content_type="application/json")
+    mins = {"TON": 0.5, "USDT": 1.0, "BTC": 0.0001, "ETH": 0.001}
+    maxs = {"TON": 500.0, "USDT": 2000.0, "BTC": 0.5, "ETH": 10.0}
+    bals = {"TON": 0.0, "USDT": 0.0, "BTC": 0.0, "ETH": 0.0}
     try:
-        import aiosqlite
-        async with aiosqlite.connect(settings.db_name) as db:
-            row = await (await db.execute(
-                "SELECT balance, usdt_balance FROM users WHERE user_id=?",
-                (validated.user.id,),
-            )).fetchone()
-            if row:
-                ton_b, usdt_b = float(row[0] or 0), float(row[1] or 0)
+        bals = await get_all_balances(validated.user.id)
     except Exception:
         pass
     return web.json_response({
         "ok": True,
         "from": src,
         "to": dst,
-        "symbol": symbol,
-        "rate": rate,
+        "rate": float(rate),
         "fee_bps": fee_bps,
-        "min_in": min_in,
-        "max_in": max_in,
-        "balances": {"TON": ton_b, "USDT": usdt_b},
-        "supported": ["TON/USDT", "USDT/TON"],
+        "min_in": mins.get(src, 0.01),
+        "max_in": maxs.get(src, 100),
+        "balances": bals,
+        "supported": ["TON","USDT","BTC","ETH"],
     })
+
 
 
 async def api_swap_ton_usdt(request: web.Request) -> web.Response:
@@ -493,7 +521,7 @@ async def api_swap_history(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "items": items})
 
 async def api_swap_execute(request: web.Request) -> web.Response:
-    """Execute TON↔USDT ledger swap."""
+    """Execute multi-asset ledger swap (TON/USDT/BTC/ETH)."""
     validated = _authenticate(request)
     try:
         body = await request.json()
@@ -505,104 +533,58 @@ async def api_swap_execute(request: web.Request) -> web.Response:
         amount = float(body.get("amount") or 0)
     except Exception:
         raise web.HTTPBadRequest(text='{"error":"invalid_amount"}', content_type="application/json")
-
     fee_bps = 30
-    rate_raw = await get_market_price("TONUSDT")
-    if not rate_raw or rate_raw <= 0:
-        raise web.HTTPServiceUnavailable(
-            text='{"error":"price_unavailable"}', content_type="application/json"
-        )
-
-    # Slippage protection: optional quoted_rate + max_slippage_bps from client
     try:
-        quoted_rate = body.get("quoted_rate")
-        max_slip_bps = int(body.get("max_slippage_bps") or 50)  # default 0.50%
+        max_slip_bps = int(body.get("max_slippage_bps") or 50)
     except Exception:
-        quoted_rate, max_slip_bps = None, 50
-    max_slip_bps = max(1, min(max_slip_bps, 500))
-    if quoted_rate is not None:
+        max_slip_bps = 50
+    quoted = body.get("quoted_rate")
+    rate = await _swap_rate(src, dst)
+    if not rate or rate <= 0:
+        raise web.HTTPServiceUnavailable(text='{"error":"price_unavailable"}', content_type="application/json")
+    if quoted is not None:
         try:
-            qrate = float(quoted_rate)
-        except Exception:
-            qrate = 0.0
-        if qrate > 0:
-            # Compare executable rate in "dst per 1 src" terms
-            if src == "TON" and dst == "USDT":
-                exec_rate = float(rate_raw)
-            else:
-                exec_rate = 1.0 / float(rate_raw)
-            # For user selling src: worse rate = lower exec_rate vs quote
-            move_bps = abs(exec_rate - qrate) / qrate * 10000.0
-            # Only reject adverse moves beyond tolerance
-            adverse = exec_rate < qrate * (1 - max_slip_bps / 10000.0)
-            if adverse:
+            q = float(quoted)
+            if q > 0 and rate < q * (1 - max(1, min(max_slip_bps, 500)) / 10000.0):
                 raise web.HTTPConflict(
-                    text='{"error":"slippage","detail":"rate moved beyond tolerance","quoted":%s,"exec":%s}'
-                    % (qrate, exec_rate),
+                    text='{"error":"slippage","quoted":%s,"exec":%s}' % (q, rate),
                     content_type="application/json",
                 )
-
+        except web.HTTPException:
+            raise
+        except Exception:
+            pass
+    mins = {"TON": 0.5, "USDT": 1.0, "BTC": 0.0001, "ETH": 0.001}
+    maxs = {"TON": 500.0, "USDT": 2000.0, "BTC": 0.5, "ETH": 10.0}
+    if amount < mins.get(src, 0.01):
+        raise web.HTTPBadRequest(text='{"error":"min_amount"}', content_type="application/json")
+    if amount > maxs.get(src, 100):
+        raise web.HTTPBadRequest(text='{"error":"max_amount"}', content_type="application/json")
+    fee = round(amount * fee_bps / 10000.0, 10)
     try:
-        if src == "TON" and dst == "USDT":
-            if amount < 0.5:
-                raise web.HTTPBadRequest(text='{"error":"min_amount"}', content_type="application/json")
-            if amount > 500:
-                raise web.HTTPBadRequest(text='{"error":"max_amount"}', content_type="application/json")
-            fee = round(amount * fee_bps / 10000.0, 8)
-            net = round(amount - fee, 8)
-            out = round(net * float(rate_raw), 6)
-            result = await swap_ton_to_usdt(
-                validated.user.id, amount, out, rate=float(rate_raw), fee_ton=fee
-            )
-            return web.json_response({
-                "ok": True,
-                "from": "TON",
-                "to": "USDT",
-                "amount_in": amount,
-                "amount_out": out,
-                "fee": fee,
-                "fee_asset": "TON",
-                "rate": float(rate_raw),
-                "balance_ton": result.ton_balance,
-                "balance_usdt": result.usdt_balance,
-            })
-        if src == "USDT" and dst == "TON":
-            if amount < 1.0:
-                raise web.HTTPBadRequest(text='{"error":"min_amount"}', content_type="application/json")
-            if amount > 2000:
-                raise web.HTTPBadRequest(text='{"error":"max_amount"}', content_type="application/json")
-            fee = round(amount * fee_bps / 10000.0, 8)
-            net = round(amount - fee, 8)
-            out = round(net / float(rate_raw), 8)
-            result = await swap_usdt_to_ton(
-                validated.user.id, amount, out, rate=float(rate_raw), fee_usdt=fee
-            )
-            return web.json_response({
-                "ok": True,
-                "from": "USDT",
-                "to": "TON",
-                "amount_in": amount,
-                "amount_out": out,
-                "fee": fee,
-                "fee_asset": "USDT",
-                "rate": 1.0 / float(rate_raw),
-                "balance_ton": result.ton_balance,
-                "balance_usdt": result.usdt_balance,
-            })
-        raise web.HTTPBadRequest(
-            text='{"error":"unsupported_pair"}', content_type="application/json"
-        )
-    except web.HTTPException:
-        raise
+        bals = await swap_assets(validated.user.id, src, dst, amount, rate=float(rate), fee_in=fee)
+        return web.json_response({
+            "ok": True,
+            "from": src,
+            "to": dst,
+            "amount_in": amount,
+            "amount_out": round((amount - fee) * float(rate), 10),
+            "fee": fee,
+            "fee_asset": src,
+            "rate": float(rate),
+            "balances": bals,
+            "balance_ton": bals.get("TON"),
+            "balance_usdt": bals.get("USDT"),
+        })
     except InsufficientBalance:
-        raise web.HTTPPaymentRequired(
-            text='{"error":"insufficient_balance"}', content_type="application/json"
-        )
+        raise web.HTTPPaymentRequired(text='{"error":"insufficient_balance"}', content_type="application/json")
     except (InvalidAmount, BusinessRuleError) as exc:
         raise web.HTTPBadRequest(text='{"error":"%s"}' % exc, content_type="application/json")
     except Exception:
         logger.exception("swap execute failed")
         raise web.HTTPInternalServerError(text='{"error":"server_error"}', content_type="application/json")
+
+
 
 async def api_sniper_config(_request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "config": sniper_get_config()})
