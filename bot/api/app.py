@@ -152,10 +152,19 @@ def _require_admin(request: web.Request):
 
 async def health(_request: web.Request) -> web.Response:
     from bot.config import settings as _s
+    hot = False
+    try:
+        from bot.services.ton_chain import hot_wallet_configured
+        hot = hot_wallet_configured()
+    except Exception:
+        hot = False
     return web.json_response({
         "ok": True,
         "service": "cx-api",
         "auto_withdraw_max": getattr(_s, "auto_withdraw_max", None),
+        "auto_withdraw_enabled": getattr(_s, "auto_withdraw_enabled", False),
+        "withdraw_onchain_enabled": getattr(_s, "withdraw_onchain_enabled", False),
+        "hot_wallet_configured": hot,
         "backup_enabled": getattr(_s, "backup_enabled", False),
         "database_url_set": bool(getattr(_s, "database_url", "")),
     })
@@ -957,8 +966,20 @@ async def api_admin_withdraw_action(request: web.Request) -> web.Response:
     if not rid:
         raise web.HTTPBadRequest(text='{"error":"bad_id"}', content_type="application/json")
     if action == "approve":
-        await complete_withdraw(rid, tx_hash=f"admin_web_{rid}")
-        return web.json_response({"ok": True, "status": "completed"})
+        from bot.services.withdraw import settle_withdraw_onchain
+        res = await settle_withdraw_onchain(rid)
+        if not res.get("ok"):
+            raise web.HTTPBadRequest(
+                text='{"error":"%s","detail":"%s"}'
+                % (res.get("reason") or "settle_failed", res.get("error") or ""),
+                content_type="application/json",
+            )
+        return web.json_response({
+            "ok": True,
+            "status": "completed",
+            "tx_hash": res.get("tx_hash"),
+            "onchain": res.get("onchain"),
+        })
     if action == "reject":
         res = await reject_withdraw(rid)
         return web.json_response({"ok": True, "status": "rejected", "balance_ton": res.ton_balance})
