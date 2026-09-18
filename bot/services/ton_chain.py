@@ -234,6 +234,20 @@ class TonWalletNotConfigured(TonSendError):
     pass
 
 
+
+async def _admin_chain_alert(message: str) -> None:
+    """Best-effort notify admin about chain failures."""
+    try:
+        from aiogram import Bot
+        bot = Bot(token=settings.bot_token)
+        await bot.send_message(
+            settings.admin_id,
+            "CHAIN ALERT\n" + message[:3500],
+        )
+        await bot.session.close()
+    except Exception:
+        logger.exception("admin chain alert failed")
+
 async def send_ton(
     to_address: str,
     amount_ton: float,
@@ -294,6 +308,10 @@ async def send_ton(
         raise
     except Exception as exc:
         logger.exception("send_ton failed")
+        try:
+            await _admin_chain_alert("send_ton failed: %s" % exc)
+        except Exception:
+            pass
         raise TonSendError(str(exc)) from exc
     finally:
         try:
