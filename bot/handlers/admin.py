@@ -178,6 +178,7 @@ T = {
 }
 
 _admin_lang: dict[int, str] = {}
+_2fa_sessions: dict[int, float] = {}  # uid -> ok_until
 
 
 def _lang(uid: int) -> str:
@@ -191,6 +192,53 @@ def _t(uid: int) -> dict:
 def _admin_only(user_id: int) -> bool:
     return int(user_id) == int(settings.admin_id)
 
+
+
+def _admin_2fa_ok(code: str) -> bool:
+    from bot.services.admin_2fa import is_2fa_enabled, verify_totp
+    if not is_2fa_enabled():
+        return True
+    return verify_totp(code)
+
+
+def _admin_2fa_session_ok(uid: int) -> bool:
+    from bot.services.admin_2fa import is_2fa_enabled
+    if not is_2fa_enabled():
+        return True
+    import time as _t
+    return _2fa_sessions.get(int(uid), 0) > _t.time()
+
+
+def _admin_2fa_session_grant(uid: int, sec: float = 300) -> None:
+    import time as _t
+    _2fa_sessions[int(uid)] = _t.time() + sec
+
+
+async def _ask_or_check_2fa(callback_or_msg, state, next_action: str) -> bool:
+    """Return True if 2FA already satisfied; else ask for code and store next_action."""
+    from bot.services.admin_2fa import is_2fa_enabled
+    from bot.config import settings as _s
+    if not is_2fa_enabled():
+        return True
+    if not (getattr(_s, "admin_2fa_required", False) or is_2fa_enabled()):
+        return True
+    # Always require when secret configured
+    data = await state.get_data()
+    if data.get("admin_2fa_ok_until", 0) > __import__("time").time():
+        return True
+    await state.update_data(admin_2fa_next=next_action)
+    uid = callback_or_msg.from_user.id
+    fa = _lang(uid) == "fa"
+    text = "کد ۶ رقمی Google Authenticator را بفرستید:" if fa else "Send your 6-digit Authenticator code:"
+    if hasattr(callback_or_msg, "message"):
+        await callback_or_msg.message.answer(text)
+        await callback_or_msg.answer()
+    else:
+        await callback_or_msg.answer(text)
+    from bot.states import UserStates
+    # reuse a generic state if exists - or store in FSM with admin flag
+    await state.set_state(UserStates.waiting_for_admin_2fa if hasattr(UserStates, "waiting_for_admin_2fa") else None)
+    return False
 
 def admin_kb(uid: int, menu: str = "home") -> InlineKeyboardMarkup:
     """Nested admin menus: home -> system/ops/users/treasury."""
@@ -214,6 +262,7 @@ def admin_kb(uid: int, menu: str = "home") -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=f"{t['btn_freeze']}: {freeze}", callback_data="adm_toggle_freeze")],
             [InlineKeyboardButton(text=f"{t['btn_maint']}: {maint}", callback_data="adm_toggle_maint")],
             [InlineKeyboardButton(text=t.get("btn_metrics", "آمار زنده" if fa else "Live metrics"), callback_data="adm_metrics")],
+            [InlineKeyboardButton(text=("باز کردن ۲FA" if fa else "Unlock 2FA"), callback_data="adm_2fa_unlock")],
             [InlineKeyboardButton(text=f"« {back}", callback_data="adm_menu_home")],
         ])
 
@@ -506,6 +555,44 @@ async def cb_noop(callback: CallbackQuery):
     await callback.answer()
 
 
+
+@router.message(StateFilter(UserStates.waiting_for_admin_2fa))
+async def process_admin_2fa(message: Message, state: FSMContext):
+    if not _admin_only(message.from_user.id):
+        await state.clear()
+        return
+    code = (message.text or "").strip()
+    if not _admin_2fa_ok(code):
+        await message.answer("Invalid 2FA code" if _lang(message.from_user.id)!="fa" else "کد ۲FA نامعتبر")
+        return
+    import time as _time
+    await state.update_data(admin_2fa_ok_until=_time.time() + 300)
+    _admin_2fa_session_grant(message.from_user.id, 300)
+    data = await state.get_data()
+    nxt = data.get("admin_2fa_next") or "home"
+    await state.set_state(None)
+    await message.answer("2FA OK" if _lang(message.from_user.id)!="fa" else "تأیید ۲FA")
+    # re-open home
+    try:
+        await message.answer(await _stats_text(message.from_user.id), reply_markup=admin_kb(message.from_user.id, "home"), parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+
+@router.callback_query(F.data == "adm_2fa_unlock", StateFilter("*"))
+async def cb_2fa_unlock(callback: CallbackQuery, state: FSMContext):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer("denied", show_alert=True)
+    from bot.services.admin_2fa import is_2fa_enabled
+    if not is_2fa_enabled():
+        await callback.answer("2FA not configured", show_alert=True)
+        return
+    await state.set_state(UserStates.waiting_for_admin_2fa)
+    fa = _lang(callback.from_user.id) == "fa"
+    await callback.message.answer("کد ۶ رقمی Authenticator:" if fa else "Enter 6-digit Authenticator code:")
+    await callback.answer()
+
 @router.callback_query(F.data == "adm_lang", StateFilter("*"))
 async def cb_lang(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
@@ -534,6 +621,13 @@ async def cb_refresh(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "adm_toggle_freeze", StateFilter("*"))
 async def cb_freeze(callback: CallbackQuery):
+    if not _admin_2fa_session_ok(callback.from_user.id):
+        await callback.answer("2FA required — System → Unlock 2FA", show_alert=True)
+        return
+    from bot.services.admin_2fa import is_2fa_enabled
+    if is_2fa_enabled():
+        st = callback.bot  # placeholder
+    # 2FA: use recent window via FSM — simplified gate via data store
     if not _admin_only(callback.from_user.id):
         return await callback.answer("Denied", show_alert=True)
     settings.emergency_freeze = not bool(settings.emergency_freeze)
@@ -547,6 +641,13 @@ async def cb_freeze(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm_toggle_maint", StateFilter("*"))
 async def cb_maint(callback: CallbackQuery):
+    if not _admin_2fa_session_ok(callback.from_user.id):
+        await callback.answer("2FA required — System → Unlock 2FA", show_alert=True)
+        return
+    from bot.services.admin_2fa import is_2fa_enabled
+    if is_2fa_enabled():
+        st = callback.bot  # placeholder
+    # 2FA: use recent window via FSM — simplified gate via data store
     if not _admin_only(callback.from_user.id):
         return await callback.answer("Denied", show_alert=True)
     settings.maintenance_mode = not bool(getattr(settings, "maintenance_mode", False))
@@ -641,6 +742,9 @@ async def cb_withdraws(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm_wd_ok_"), StateFilter("*"))
 async def cb_wd_ok(callback: CallbackQuery):
+    if not _admin_2fa_session_ok(callback.from_user.id):
+        await callback.answer("2FA required", show_alert=True)
+        return
     if not _admin_only(callback.from_user.id):
         return await callback.answer("Denied", show_alert=True)
     rid = int(callback.data.split("_")[-1])
