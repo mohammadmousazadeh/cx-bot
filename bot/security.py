@@ -73,3 +73,51 @@ def map_predict_symbol(asset: str) -> str:
         "GOLD": "XAUUSDT",  # may fail on some exchanges
     }
     return mapping.get(a, "BTCUSDT")
+
+
+
+def hash_security_pin(user_id: int, pin: str) -> str:
+    """Store PIN as HMAC so DB leak does not expose plaintext."""
+    raw = f"{int(user_id)}:{str(pin).strip()}:{settings.bot_token}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def verify_security_pin(user_id: int, pin: str, stored: Optional[str]) -> bool:
+    if not stored or not pin:
+        return False
+    stored_s = str(stored).strip()
+    candidate = str(pin).strip()
+    # Legacy plaintext 4-digit pins
+    if stored_s.isdigit() and len(stored_s) == 4:
+        return stored_s == candidate
+    return hmac_compare(stored_s, hash_security_pin(user_id, candidate))
+
+
+def hmac_compare(a: str, b: str) -> bool:
+    import hmac as _hmac
+    try:
+        return _hmac.compare_digest(str(a), str(b))
+    except Exception:
+        return False
+
+
+def financial_rate_limit(user_id: int, action: str) -> bool:
+    """Stricter limits for money-moving endpoints."""
+    limits = {
+        "withdraw": (5, 60.0),
+        "binary_open": (30, 60.0),
+        "swap": (20, 60.0),
+        "pin_try": (8, 300.0),
+    }
+    limit, window = limits.get(action, (10, 60.0))
+    return rate_limit(f"fin:{action}:{int(user_id)}", limit=limit, window_sec=window)
+
+
+async def alert_admin_security(text: str) -> None:
+    try:
+        from aiogram import Bot
+        bot = Bot(token=settings.bot_token)
+        await bot.send_message(settings.admin_id, "SECURITY\n" + text[:3500])
+        await bot.session.close()
+    except Exception:
+        logger.exception("admin security alert failed")
