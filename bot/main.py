@@ -94,7 +94,7 @@ async def on_startup_common(bot: Bot) -> None:
     if settings.webapp_base_url:
         try:
             from aiogram.types import MenuButtonWebApp, WebAppInfo
-            app_url = settings.webapp_base_url.rstrip("/") + "/app.html"
+            app_url = settings.webapp_base_url.rstrip("/") + "/"
             await bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(
                     text="CX App",
