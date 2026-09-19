@@ -123,7 +123,6 @@ def load_settings() -> Settings:
     return Settings(
         bot_token=token,
         admin_id=admin_id,
-        bot_username=(os.getenv("BOT_USERNAME") or "").lstrip("@"),
         referral_l1_reward=float(os.getenv("REFERRAL_L1_REWARD", "1")),
         referral_l2_reward=float(os.getenv("REFERRAL_L2_REWARD", "2")),
         db_name=os.getenv("DB_NAME", "cx_database.db").strip(),
