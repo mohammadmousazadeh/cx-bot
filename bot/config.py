@@ -91,6 +91,8 @@ class Settings:
     withdraw_require_pin: bool = True
     withdraw_require_whitelist: bool = True
     pin_max_fails: int = 5
+    admin_totp_secret: str = ""
+    admin_2fa_required: bool = False
 
 
 def load_settings() -> Settings:
@@ -131,6 +133,8 @@ def load_settings() -> Settings:
         withdraw_require_pin=_bool(os.getenv("WITHDRAW_REQUIRE_PIN"), True),
         withdraw_require_whitelist=_bool(os.getenv("WITHDRAW_REQUIRE_WHITELIST"), True),
         pin_max_fails=int(os.getenv("PIN_MAX_FAILS", "5")),
+        admin_totp_secret=os.getenv("ADMIN_TOTP_SECRET", "").strip(),
+        admin_2fa_required=_bool(os.getenv("ADMIN_2FA_REQUIRED"), False),
         db_name=os.getenv("DB_NAME", "cx_database.db").strip(),
         exchange_wallet=exchange,
         payment_wallet=payment,
