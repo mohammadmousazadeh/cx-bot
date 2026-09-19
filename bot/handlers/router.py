@@ -537,8 +537,17 @@ async def web_app_data_handler(message: Message, state: FSMContext):
                     return await message.answer(t["cooldown_error"])
             except Exception: pass
                 
-        if not pin:
-            return await message.answer("⚠️ لطفاً ابتدا از بخش تنظیمات -> مرکز امنیت حساب، پین ۴ رقمی تعریف کنید.")
+        if getattr(settings, "withdraw_require_pin", True) and not pin:
+            return await message.answer(
+                "Please set a 4-digit security PIN first." if lang == "en"
+                else "⚠️ ابتدا از تنظیمات امنیتی، پین ۴ رقمی تعریف کنید."
+            )
+        wl = user_data[8]
+        if getattr(settings, "withdraw_require_whitelist", True) and not wl:
+            return await message.answer(
+                "Please set a whitelist wallet address first." if lang == "en"
+                else "⚠️ ابتدا از تنظیمات امنیتی، آدرس ولت سفید را ثبت کنید."
+            )
             
         await message.answer(t["with_addr_ask"], reply_markup=get_cancel_kb(lang), parse_mode="Markdown")
         await state.set_state(UserStates.waiting_for_withdraw_address)
@@ -816,7 +825,9 @@ async def process_pin_setup(message: Message, state: FSMContext):
         
     cooldown = datetime.now() + timedelta(hours=24)
     async with aiosqlite.connect(settings.db_name) as db:
-        await db.execute("UPDATE users SET security_pin = ?, cooldown_until = ? WHERE user_id = ?", (pin, str(cooldown), user_id))
+        from bot.security import hash_security_pin
+        pin_hash = hash_security_pin(user_id, pin)
+        await db.execute("UPDATE users SET security_pin = ?, cooldown_until = ? WHERE user_id = ?", (pin_hash, str(cooldown), user_id))
         await db.commit()
         
     await log_security_event(user_id, "Security PIN Changed")
@@ -929,7 +940,18 @@ async def process_with_addr(message: Message, state: FSMContext):
         return await message.answer(t["cancelled"], reply_markup=get_main_dashboard_kb(lang, balance, kyc, message.from_user.id == settings.admin_id, user_id=message.from_user.id))
         
     addr = message.text.strip()
-    if wl and addr != wl:
+    if getattr(settings, "withdraw_require_whitelist", True):
+        if not wl:
+            return await message.answer(
+                "Whitelist required." if lang == "en" else "ثبت آدرس سفید الزامی است."
+            )
+        if addr != wl:
+            await log_security_event(message.from_user.id, "withdraw_addr_mismatch")
+            return await message.answer(
+                (f"Withdraw only to whitelist:\n`{wl}`") if lang == "en"
+                else (f"🔒 برداشت فقط به آدرس لیست سفید:\n`{wl}`")
+            )
+    elif wl and addr != wl:
         return await message.answer(f"🔒 برداشت تنها به آدرس لیست سفید مجاز است:\n`{wl}`")
         
     await state.update_data(with_addr=addr)
@@ -992,14 +1014,32 @@ async def process_with_pin(message: Message, state: FSMContext):
     user_data = await get_user_data(user_id)
     lang, pin, balance, kyc = user_data[0], user_data[6], user_data[4], user_data[1]
     t = TEXTS[lang]
-    
-    if message.text.strip() != str(pin):
+
+    from bot.security import verify_security_pin, financial_rate_limit, alert_admin_security
+    if not financial_rate_limit(user_id, "pin_try"):
+        await log_security_event(user_id, "pin_rate_limited")
+        return await message.answer(
+            "Too many PIN attempts. Try later." if lang == "en" else "تلاش پین زیاد بود. بعداً دوباره."
+        )
+    if not verify_security_pin(user_id, message.text.strip(), pin):
+        await log_security_event(user_id, "wrong_withdraw_pin")
+        fails = int((await state.get_data()).get("pin_fails") or 0) + 1
+        await state.update_data(pin_fails=fails)
+        max_f = int(getattr(settings, "pin_max_fails", 5) or 5)
+        if fails >= max_f:
+            try:
+                await alert_admin_security(f"user {user_id} failed withdraw PIN {fails} times")
+            except Exception:
+                pass
         return await message.answer(t["wrong_pin"])
         
     data = await state.get_data()
     amount = data["with_amount"]
     addr = data["with_addr"]
     
+    from bot.security import financial_rate_limit as _frl
+    if not _frl(user_id, "withdraw"):
+        return await message.answer("Rate limited" if lang == "en" else "تعداد درخواست زیاد است.")
     try:
         ledger_res, req_id = await hold_withdraw(user_id, amount, address=addr)
     except InsufficientBalance:
