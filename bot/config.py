@@ -88,6 +88,9 @@ class Settings:
     bot_username: str = ""
     referral_l1_reward: float = 1.0
     referral_l2_reward: float = 2.0
+    withdraw_require_pin: bool = True
+    withdraw_require_whitelist: bool = True
+    pin_max_fails: int = 5
 
 
 def load_settings() -> Settings:
@@ -125,6 +128,9 @@ def load_settings() -> Settings:
         admin_id=admin_id,
         referral_l1_reward=float(os.getenv("REFERRAL_L1_REWARD", "1")),
         referral_l2_reward=float(os.getenv("REFERRAL_L2_REWARD", "2")),
+        withdraw_require_pin=_bool(os.getenv("WITHDRAW_REQUIRE_PIN"), True),
+        withdraw_require_whitelist=_bool(os.getenv("WITHDRAW_REQUIRE_WHITELIST"), True),
+        pin_max_fails=int(os.getenv("PIN_MAX_FAILS", "5")),
         db_name=os.getenv("DB_NAME", "cx_database.db").strip(),
         exchange_wallet=exchange,
         payment_wallet=payment,
@@ -143,7 +149,7 @@ def load_settings() -> Settings:
         api_enabled=_bool(os.getenv("API_ENABLED"), True),
         api_host=os.getenv("API_HOST", "0.0.0.0").strip(),
         api_port=int(os.getenv("API_PORT", "8080")),
-        webapp_init_max_age=int(os.getenv("WEBAPP_INIT_MAX_AGE", "86400")),
+        webapp_init_max_age=int(os.getenv("WEBAPP_INIT_MAX_AGE", "3600")),
         webapp_cors_origins=_cors_list(os.getenv("WEBAPP_CORS_ORIGINS", "*")),
         webapp_api_public_url=os.getenv("WEBAPP_API_PUBLIC_URL", "").rstrip("/"),
         webhook_url=webhook_url,
