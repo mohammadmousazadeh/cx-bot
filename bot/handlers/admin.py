@@ -192,29 +192,33 @@ def _admin_only(user_id: int) -> bool:
     return int(user_id) == int(settings.admin_id)
 
 
-def admin_kb(uid: int) -> InlineKeyboardMarkup:
+def admin_kb(uid: int, menu: str = "home") -> InlineKeyboardMarkup:
+    """Nested admin menus: home -> system/ops/users/treasury."""
     t = _t(uid)
     freeze = t["on"] if settings.emergency_freeze else t["off"]
     maint = t["on"] if getattr(settings, "maintenance_mode", False) else t["off"]
+    fa = _lang(uid) == "fa"
+    back = t.get("btn_back", "بازگشت" if fa else "Back")
+    home = t.get("btn_home", "خانه ادمین" if fa else "Admin home")
 
-    def sep(label: str) -> list:
-        return [InlineKeyboardButton(text=label, callback_data="adm_noop")]
+    def row(*btns):
+        return list(btns)
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            sep(t["sec_system"]),
-            [
-                InlineKeyboardButton(text=("کنسول وب" if _lang(uid)=="fa" else "Web console"), web_app=WebAppInfo(url=admin_webapp_url(uid))),
-            ],
+    if menu == "system":
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=("کنسول وب" if fa else "Web console"), web_app=WebAppInfo(url=admin_webapp_url(uid)))],
             [
                 InlineKeyboardButton(text=t["btn_refresh"], callback_data="adm_refresh"),
                 InlineKeyboardButton(text=t["btn_lang"], callback_data="adm_lang"),
             ],
-            [
-                InlineKeyboardButton(text=f"{t['btn_freeze']}: {freeze}", callback_data="adm_toggle_freeze"),
-                InlineKeyboardButton(text=f"{t['btn_maint']}: {maint}", callback_data="adm_toggle_maint"),
-            ],
-            sep(t["sec_ops"]),
+            [InlineKeyboardButton(text=f"{t['btn_freeze']}: {freeze}", callback_data="adm_toggle_freeze")],
+            [InlineKeyboardButton(text=f"{t['btn_maint']}: {maint}", callback_data="adm_toggle_maint")],
+            [InlineKeyboardButton(text=t.get("btn_metrics", "آمار زنده" if fa else "Live metrics"), callback_data="adm_metrics")],
+            [InlineKeyboardButton(text=f"« {back}", callback_data="adm_menu_home")],
+        ])
+
+    if menu == "ops":
+        return InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text=t["btn_wd"], callback_data="adm_withdraws"),
                 InlineKeyboardButton(text=t["btn_tickets"], callback_data="adm_tickets"),
@@ -227,21 +231,43 @@ def admin_kb(uid: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text=t["btn_daily"], callback_data="adm_daily"),
                 InlineKeyboardButton(text=t["btn_tx"], callback_data="adm_recent_tx"),
             ],
-            sep(t["sec_users"]),
+            [InlineKeyboardButton(text=f"« {back}", callback_data="adm_menu_home")],
+        ])
+
+    if menu == "users":
+        return InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text=t["btn_lookup"], callback_data="adm_lookup"),
                 InlineKeyboardButton(text=t["btn_kyc"], callback_data="adm_kyc"),
             ],
-            [
-                InlineKeyboardButton(text=t["btn_broadcast"], callback_data="adm_broadcast"),
-            ],
-            sep(t["sec_finance"]),
+            [InlineKeyboardButton(text=t["btn_broadcast"], callback_data="adm_broadcast")],
+            [InlineKeyboardButton(text=f"« {back}", callback_data="adm_menu_home")],
+        ])
+
+    if menu == "treasury":
+        return InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text=t["btn_credit"], callback_data="adm_credit"),
                 InlineKeyboardButton(text=t["btn_debit"], callback_data="adm_debit"),
             ],
-        ]
-    )
+            [InlineKeyboardButton(text=t.get("btn_hot", "وضعیت ولت داغ" if fa else "Hot wallet"), callback_data="adm_hot_wallet")],
+            [InlineKeyboardButton(text=t.get("btn_backup", "بکاپ" if fa else "Backups"), callback_data="adm_backups")],
+            [InlineKeyboardButton(text=f"« {back}", callback_data="adm_menu_home")],
+        ])
+
+    # home root — categories only
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=("کنسول وب" if fa else "Web console"), web_app=WebAppInfo(url=admin_webapp_url(uid)))],
+        [
+            InlineKeyboardButton(text=t["btn_refresh"], callback_data="adm_refresh"),
+            InlineKeyboardButton(text=t["btn_lang"], callback_data="adm_lang"),
+        ],
+        [InlineKeyboardButton(text=("⚙️ " + t["sec_system"].replace("▸ ", "").replace("▸", "").strip()) if fa else ("⚙️ System"), callback_data="adm_menu_system")],
+        [InlineKeyboardButton(text=("📋 " + t["sec_ops"].replace("▸ ", "").replace("▸", "").strip()) if fa else ("📋 Operations"), callback_data="adm_menu_ops")],
+        [InlineKeyboardButton(text=("👥 " + t["sec_users"].replace("▸ ", "").replace("▸", "").strip()) if fa else ("👥 Users"), callback_data="adm_menu_users")],
+        [InlineKeyboardButton(text=("🏦 " + t["sec_finance"].replace("▸ ", "").replace("▸", "").strip()) if fa else ("🏦 Treasury"), callback_data="adm_menu_treasury")],
+    ])
+
 
 
 async def _stats_text(uid: int) -> str:
@@ -337,6 +363,147 @@ async def admin_dashboard(message: Message, state: FSMContext):
     await state.clear()
     uid = message.from_user.id
     await message.answer(await _stats_text(uid), reply_markup=admin_kb(uid), parse_mode="Markdown")
+
+
+
+@router.callback_query(F.data == "adm_menu_home", StateFilter("*"))
+async def cb_menu_home(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
+    uid = callback.from_user.id
+    try:
+        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid, "home"), parse_mode="Markdown")
+    except Exception:
+        await callback.message.answer(await _stats_text(uid), reply_markup=admin_kb(uid, "home"), parse_mode="Markdown")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm_menu_system", StateFilter("*"))
+async def cb_menu_system(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
+    uid = callback.from_user.id
+    fa = _lang(uid) == "fa"
+    title = "سیستم" if fa else "System"
+    try:
+        await callback.message.edit_text(title + "\n\n" + await _stats_text(uid), reply_markup=admin_kb(uid, "system"), parse_mode="Markdown")
+    except Exception:
+        await callback.message.answer(title, reply_markup=admin_kb(uid, "system"))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm_menu_ops", StateFilter("*"))
+async def cb_menu_ops(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
+    uid = callback.from_user.id
+    title = "عملیات" if _lang(uid) == "fa" else "Operations"
+    try:
+        await callback.message.edit_text(title, reply_markup=admin_kb(uid, "ops"))
+    except Exception:
+        await callback.message.answer(title, reply_markup=admin_kb(uid, "ops"))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm_menu_users", StateFilter("*"))
+async def cb_menu_users(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
+    uid = callback.from_user.id
+    title = "کاربران" if _lang(uid) == "fa" else "Users"
+    try:
+        await callback.message.edit_text(title, reply_markup=admin_kb(uid, "users"))
+    except Exception:
+        await callback.message.answer(title, reply_markup=admin_kb(uid, "users"))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm_menu_treasury", StateFilter("*"))
+async def cb_menu_treasury(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
+    uid = callback.from_user.id
+    title = "خزانه" if _lang(uid) == "fa" else "Treasury"
+    try:
+        await callback.message.edit_text(title, reply_markup=admin_kb(uid, "treasury"))
+    except Exception:
+        await callback.message.answer(title, reply_markup=admin_kb(uid, "treasury"))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm_metrics", StateFilter("*"))
+async def cb_metrics(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
+    uid = callback.from_user.id
+    fa = _lang(uid) == "fa"
+    lines = []
+    try:
+        from bot.services.monitoring import snapshot
+        snap = snapshot()
+        lines.append("آمار زنده" if fa else "Live metrics")
+        lines.append(f"uptime: {snap.get('uptime_sec')}s")
+        for k, v in (snap.get("counters") or {}).items():
+            lines.append(f"{k}: {v}")
+        for e in (snap.get("recent_chain_errors") or [])[:3]:
+            lines.append(f"err {e.get('source')}: {str(e.get('detail'))[:80]}")
+    except Exception as exc:
+        lines.append(str(exc))
+    lines.append(f"APP_VERSION: {getattr(settings, 'app_version', '?')}")
+    text = "\n".join(lines)
+    try:
+        await callback.message.edit_text(text, reply_markup=admin_kb(uid, "system"))
+    except Exception:
+        await callback.message.answer(text, reply_markup=admin_kb(uid, "system"))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm_hot_wallet", StateFilter("*"))
+async def cb_hot_wallet(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
+    uid = callback.from_user.id
+    fa = _lang(uid) == "fa"
+    try:
+        from bot.services.ton_chain import hot_wallet_configured
+        ok = bool(hot_wallet_configured())
+    except Exception:
+        ok = False
+    text = ("ولت داغ: پیکربندی شده" if ok else "ولت داغ: پیکربندی نشده") if fa else (
+        "Hot wallet: configured" if ok else "Hot wallet: not configured"
+    )
+    text += f"\nauto_max={getattr(settings,'auto_withdraw_max',0)} onchain={getattr(settings,'withdraw_onchain_enabled',False)}"
+    try:
+        await callback.message.edit_text(text, reply_markup=admin_kb(uid, "treasury"))
+    except Exception:
+        await callback.message.answer(text, reply_markup=admin_kb(uid, "treasury"))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm_backups", StateFilter("*"))
+async def cb_backups(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
+    uid = callback.from_user.id
+    fa = _lang(uid) == "fa"
+    try:
+        from bot.workers.backup import list_backups
+        rows = list_backups(5)
+        text = ("بکاپ نیست" if fa else "No backups") if not rows else (
+            ("بکاپ‌های اخیر:\n" if fa else "Recent backups:\n") + "\n".join(str(r)[:120] for r in rows)
+        )
+    except Exception as exc:
+        text = str(exc)
+    try:
+        await callback.message.edit_text(text, reply_markup=admin_kb(uid, "treasury"))
+    except Exception:
+        await callback.message.answer(text, reply_markup=admin_kb(uid, "treasury"))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm_noop", StateFilter("*"))
+async def cb_noop(callback: CallbackQuery):
+    await callback.answer()
 
 
 @router.callback_query(F.data == "adm_lang", StateFilter("*"))
