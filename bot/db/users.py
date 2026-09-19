@@ -217,3 +217,31 @@ async def pay_referral_l2_reward(invitee_id: int) -> float:
         return reward
     except Exception:
         return 0.0
+
+
+
+async def get_user_seen_version(user_id: int) -> str:
+    async with get_db() as db:
+        try:
+            cur = await db.execute(
+                "SELECT seen_app_version FROM users WHERE user_id=?",
+                (user_id,),
+            )
+            row = await cur.fetchone()
+            if row:
+                return str(row[0] or "")
+        except Exception:
+            return ""
+    return ""
+
+
+async def mark_app_version_seen(user_id: int, version: str) -> None:
+    async with get_db() as db:
+        try:
+            await db.execute(
+                "UPDATE users SET seen_app_version=? WHERE user_id=?",
+                (version, user_id),
+            )
+            await db.commit()
+        except Exception:
+            pass
