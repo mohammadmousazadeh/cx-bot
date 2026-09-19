@@ -79,6 +79,7 @@ def full_webhook_url() -> str:
 
 async def on_startup_common(bot: Bot) -> None:
     await init_db()
+    # version announce deferred until bot exists
     me = await bot.get_me()
     logger.info("Bot online as @%s (id=%s)", me.username, me.id)
     logger.info(
@@ -105,8 +106,40 @@ async def on_startup_common(bot: Bot) -> None:
             logger.exception("Failed to set chat menu button")
 
 
+
+async def announce_app_update(bot: Bot) -> None:
+    """Notify admin when APP_VERSION changes after deploy."""
+    try:
+        ver = getattr(settings, "app_version", "1.0.0") or "1.0.0"
+        changelog = getattr(settings, "app_changelog", "") or ""
+        path = Path(settings.db_name).parent / ".last_app_version"
+        prev = ""
+        if path.exists():
+            prev = path.read_text(encoding="utf-8").strip()
+        if prev == ver:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(ver, encoding="utf-8")
+        if not prev:
+            logger.info("App version initialized to %s", ver)
+            return
+        text = (
+            f"**CX updated**\n"
+            f"Version: `{prev}` → `{ver}`\n"
+        )
+        if changelog:
+            text += f"\n{changelog[:1500]}"
+        try:
+            await bot.send_message(settings.admin_id, text, parse_mode="Markdown")
+        except Exception:
+            logger.exception("failed to notify admin about update")
+        logger.info("Announced app update %s -> %s", prev, ver)
+    except Exception:
+        logger.exception("announce_app_update failed")
+
 async def run_polling() -> None:
     bot = build_bot()
+    await announce_app_update(bot)
     dp = build_dispatcher()
 
     async def _startup() -> None:
@@ -149,6 +182,7 @@ async def run_webhook() -> None:
     from bot.api.app import create_api_app
 
     bot = build_bot()
+    await announce_app_update(bot)
     dp = build_dispatcher()
 
     webhook_endpoint = full_webhook_url()
@@ -224,6 +258,7 @@ async def run_webhook() -> None:
         await stop_deposit_scanner()
         await stop_backup_worker()
         await runner.cleanup()
+
 
 
 async def run() -> None:
