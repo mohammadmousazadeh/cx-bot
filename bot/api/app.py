@@ -52,7 +52,7 @@ from bot.db.ledger import (
     credit_ton,
     debit_ton,
 )
-from bot.security import rate_limit, require_not_frozen, sanitize_amount
+from bot.security import rate_limit, require_not_frozen, sanitize_amount, financial_rate_limit, verify_security_pin, alert_admin_security
 from bot.services.telegram_auth import (
     InitDataError,
     extract_init_data_from_headers,
@@ -128,7 +128,7 @@ def _authenticate(request: web.Request):
                 text='{"error":"missing_init_data","detail":"%s"}' % exc,
                 content_type="application/json",
             ) from exc
-    if not rate_limit("api:%s" % uid, limit=60, window_sec=60):
+    if not rate_limit("api:%s" % uid, limit=40, window_sec=60):
         raise web.HTTPTooManyRequests(
             text='{"error":"rate_limited"}',
             content_type="application/json",
@@ -256,6 +256,8 @@ async def api_binary_price(request: web.Request) -> web.Response:
 
 async def api_binary_open(request: web.Request) -> web.Response:
     validated = _authenticate(request)
+    if not financial_rate_limit(validated.user.id, "binary_open"):
+        raise web.HTTPTooManyRequests(text='{"error":"rate_limited"}', content_type="application/json")
     try:
         body = await request.json()
     except Exception:
@@ -528,6 +530,8 @@ async def api_swap_history(request: web.Request) -> web.Response:
 async def api_swap_execute(request: web.Request) -> web.Response:
     """Execute multi-asset ledger swap (TON/USDT/BTC/ETH)."""
     validated = _authenticate(request)
+    if not financial_rate_limit(validated.user.id, "swap"):
+        raise web.HTTPTooManyRequests(text='{"error":"rate_limited"}', content_type="application/json")
     try:
         body = await request.json()
     except Exception:
@@ -877,6 +881,36 @@ async def api_withdraw(request: web.Request) -> web.Response:
         )
     if len(address) < 20:
         raise web.HTTPBadRequest(text='{"error":"invalid_address"}', content_type="application/json")
+    if not financial_rate_limit(validated.user.id, "withdraw"):
+        raise web.HTTPTooManyRequests(text='{"error":"rate_limited"}', content_type="application/json")
+    # PIN + whitelist enforcement
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        row = await (await db.execute(
+            "SELECT security_pin, whitelist_address FROM users WHERE user_id=?",
+            (validated.user.id,),
+        )).fetchone()
+    stored_pin = row[0] if row else None
+    wl = (row[1] if row else None) or ""
+    if getattr(settings, "withdraw_require_whitelist", True):
+        if not wl:
+            raise web.HTTPForbidden(text='{"error":"whitelist_required"}', content_type="application/json")
+        if address.strip() != str(wl).strip():
+            from bot.db import log_security_event
+            await log_security_event(validated.user.id, "api_withdraw_addr_mismatch")
+            raise web.HTTPForbidden(text='{"error":"whitelist_mismatch"}', content_type="application/json")
+    if getattr(settings, "withdraw_require_pin", True):
+        pin = str(body.get("pin") or body.get("security_pin") or "")
+        if not financial_rate_limit(validated.user.id, "pin_try"):
+            raise web.HTTPTooManyRequests(text='{"error":"pin_rate_limited"}', content_type="application/json")
+        if not verify_security_pin(validated.user.id, pin, stored_pin):
+            from bot.db import log_security_event
+            await log_security_event(validated.user.id, "api_wrong_withdraw_pin")
+            try:
+                await alert_admin_security("API wrong withdraw PIN uid=%s" % validated.user.id)
+            except Exception:
+                pass
+            raise web.HTTPForbidden(text='{"error":"invalid_pin"}', content_type="application/json")
     try:
         result, req_id = await hold_withdraw(validated.user.id, amount, address=address)
     except InsufficientBalance:
