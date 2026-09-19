@@ -164,6 +164,7 @@ async def health(_request: web.Request) -> web.Response:
         "ok": True,
         "service": "cx-api",
         "auto_withdraw_max": getattr(_s, "auto_withdraw_max", None),
+        "auto_withdraw_safety": "cap retained for security; raise AUTO_WITHDRAW_MAX only if needed",
         "auto_withdraw_enabled": getattr(_s, "auto_withdraw_enabled", False),
         "withdraw_onchain_enabled": getattr(_s, "withdraw_onchain_enabled", False),
         "hot_wallet_configured": hot,
@@ -171,6 +172,9 @@ async def health(_request: web.Request) -> web.Response:
         "backup_dir": getattr(_s, "backup_dir", "backups"),
         "db_name": getattr(_s, "db_name", ""),
         "app_version": getattr(_s, "app_version", "1.0.0"),
+        "postgres_url_set": bool(getattr(_s, "database_url", "")),
+        "postgres_cutover_ready": False,
+        "postgres_note": "SQLite is live. Apply bot/db/postgres_schema.sql only when running a controlled cutover.",
         "database_url_set": bool(getattr(_s, "database_url", "")),
         "db_engine": "postgres" if getattr(_s, "database_url", "") else "sqlite",
         "note": "Production path is SQLite on volume; set DATABASE_URL only after full Postgres migration.",
@@ -1447,6 +1451,41 @@ async def api_admin_metrics(request: web.Request) -> web.Response:
         "stats": stats,
     })
 
+
+async def api_admin_credit_asset(request: web.Request) -> web.Response:
+    """Admin credit TON/USDT/BTC/ETH internal balances (ops / BTC-ETH float)."""
+    _require_admin(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    try:
+        uid = int(body.get("user_id") or 0)
+        amount = float(body.get("amount") or 0)
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"bad_params"}', content_type="application/json")
+    asset = str(body.get("asset") or "TON").upper()
+    if asset not in ("TON", "USDT", "BTC", "ETH") or amount == 0 or not uid:
+        raise web.HTTPBadRequest(text='{"error":"bad_asset_or_amount"}', content_type="application/json")
+    col = {"TON": "balance", "USDT": "usdt_balance", "BTC": "btc_balance", "ETH": "eth_balance"}[asset]
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        await db.execute(
+            f"UPDATE users SET {col} = COALESCE({col},0) + ? WHERE user_id=?",
+            (amount, uid),
+        )
+        await db.execute(
+            """
+            INSERT INTO transactions (user_id, kind, amount, currency, balance_after, meta)
+            SELECT ?, ?, ?, ?, COALESCE(""" + col + """,0), ?
+            FROM users WHERE user_id=?
+            """,
+            (uid, "admin_credit", amount, asset, '{"via":"admin_asset"}', uid),
+        )
+        await db.commit()
+        row = await (await db.execute(f"SELECT {col} FROM users WHERE user_id=?", (uid,))).fetchone()
+    return web.json_response({"ok": True, "user_id": uid, "asset": asset, "balance": float(row[0] or 0)})
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -1472,6 +1511,7 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/version", api_app_version)
     app.router.add_get("/api/admin/backups", api_admin_backup_list)
     app.router.add_get("/api/admin/metrics", api_admin_metrics)
+    app.router.add_post("/api/admin/credit-asset", api_admin_credit_asset)
     app.router.add_post("/api/admin/backup", api_admin_backup_run)
     app.router.add_get("/api/me", api_me)
     app.router.add_get("/api/balances", api_balances)
