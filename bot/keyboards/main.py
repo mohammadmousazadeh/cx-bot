@@ -19,7 +19,7 @@ def admin_webapp_url(user_id: int) -> str:
 def _webapp_url(user_id: int | None = None) -> str:
     base = (settings.webapp_base_url or "").rstrip("/")
     rnd = random.randint(1000, 9999)
-    url = f"{base}/app.html?v={rnd}"
+    url = f"{base}/index.html?v={rnd}"
     if user_id:
         exp, sig = make_webapp_token(int(user_id), settings.bot_token)
         url += f"&uid={int(user_id)}&exp={exp}&sig={sig}"
