@@ -143,6 +143,26 @@ def _authenticate(request: web.Request):
     return validated
 
 
+
+def _require_admin_2fa(request: web.Request, body: Optional[dict] = None) -> None:
+    """When ADMIN_2FA_REQUIRED or secret set with required flag, demand TOTP."""
+    from bot.services.admin_2fa import is_2fa_enabled, verify_totp
+    from bot.config import settings as _s
+    if not is_2fa_enabled():
+        return
+    if not getattr(_s, "admin_2fa_required", False) and not is_2fa_enabled():
+        return
+    # enforce when secret present AND (required flag OR always for sensitive)
+    if not is_2fa_enabled():
+        return
+    code = ""
+    if body:
+        code = str(body.get("admin_totp") or body.get("totp") or body.get("otp") or "")
+    if not code:
+        code = request.headers.get("X-Admin-TOTP", "") or request.rel_url.query.get("totp", "")
+    if not verify_totp(code):
+        raise web.HTTPForbidden(text='{"error":"admin_2fa_required"}', content_type="application/json")
+
 def _require_admin(request: web.Request):
     validated = _authenticate(request)
     if int(validated.user.id) != int(settings.admin_id):
@@ -1024,6 +1044,12 @@ async def api_admin_withdraws(request: web.Request) -> web.Response:
 async def api_admin_withdraw_action(request: web.Request) -> web.Response:
     _require_admin(request)
     try:
+        _body = await request.json()
+    except Exception:
+        _body = {}
+    _require_admin_2fa(request, _body if isinstance(_body, dict) else {})
+    _require_admin(request)
+    try:
         body = await request.json()
     except Exception:
         raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
@@ -1493,6 +1519,7 @@ async def api_admin_credit_asset(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    _require_admin_2fa(request, body if isinstance(body, dict) else {})
     try:
         uid = int(body.get("user_id") or 0)
         amount = float(body.get("amount") or 0)
