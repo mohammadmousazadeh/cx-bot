@@ -170,6 +170,7 @@ async def health(_request: web.Request) -> web.Response:
         "backup_enabled": getattr(_s, "backup_enabled", False),
         "backup_dir": getattr(_s, "backup_dir", "backups"),
         "db_name": getattr(_s, "db_name", ""),
+        "app_version": getattr(_s, "app_version", "1.0.0"),
         "database_url_set": bool(getattr(_s, "database_url", "")),
         "db_engine": "postgres" if getattr(_s, "database_url", "") else "sqlite",
         "note": "Production path is SQLite on volume; set DATABASE_URL only after full Postgres migration.",
@@ -1201,6 +1202,15 @@ async def api_admin_kyc_submissions(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "items": [dict(r) for r in rows]})
 
 
+
+async def api_app_version(_request: web.Request) -> web.Response:
+    return web.json_response({
+        "ok": True,
+        "version": getattr(settings, "app_version", "1.0.0"),
+        "changelog": getattr(settings, "app_changelog", "") or "",
+    })
+
+
 async def api_referral_me(request: web.Request) -> web.Response:
     validated = _authenticate(request)
     from bot.db.users import ensure_referral_code
@@ -1226,6 +1236,8 @@ async def api_referral_me(request: web.Request) -> web.Response:
         "referrer_id": referrer_id,
         "invite_link": invite_link,
         "bot_username": bot_user,
+        "reward_l1": float(getattr(settings, "referral_l1_reward", 1.0) or 0),
+        "reward_l2": float(getattr(settings, "referral_l2_reward", 2.0) or 0),
     })
 
 
@@ -1457,6 +1469,7 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/admin/transactions", api_admin_recent_tx)
 
     app.router.add_get("/api/health", health)
+    app.router.add_get("/api/version", api_app_version)
     app.router.add_get("/api/admin/backups", api_admin_backup_list)
     app.router.add_get("/api/admin/metrics", api_admin_metrics)
     app.router.add_post("/api/admin/backup", api_admin_backup_run)
