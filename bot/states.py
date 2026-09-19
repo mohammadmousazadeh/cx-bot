@@ -1,6 +1,7 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class UserStates(StatesGroup):
+    waiting_for_admin_2fa = State()
     waiting_for_withdraw_address = State()
     waiting_for_withdraw_amount = State()
     waiting_for_withdraw_pin = State()
