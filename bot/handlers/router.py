@@ -68,6 +68,38 @@ from bot.texts import TEXTS
 
 router = Router(name="main")
 
+async def _maybe_notify_app_update(message: Message) -> None:
+    """Once per version: tell user the mini-app/bot was updated."""
+    try:
+        from bot.config import settings as _s
+        from bot.db.users import get_user_seen_version, mark_app_version_seen
+        ver = getattr(_s, "app_version", "1.0.0") or "1.0.0"
+        seen = await get_user_seen_version(message.from_user.id)
+        if seen == ver:
+            return
+        changelog = getattr(_s, "app_changelog", "") or ""
+        lang = "fa"
+        try:
+            ud = await get_user_data(message.from_user.id)
+            lang = ud[0] or "fa"
+        except Exception:
+            pass
+        if lang == "fa":
+            text = f"بروزرسانی CX\nنسخه جدید: `{ver}`"
+            if changelog:
+                text += f"\n\n{changelog[:800]}"
+            text += "\n\nمینی‌اپ را از منو دوباره باز کنید."
+        else:
+            text = f"CX updated\nNew version: `{ver}`"
+            if changelog:
+                text += f"\n\n{changelog[:800]}"
+            text += "\n\nReopen the Mini App from the menu."
+        await message.answer(text, parse_mode="Markdown")
+        await mark_app_version_seen(message.from_user.id, ver)
+    except Exception:
+        pass
+
+
 # Finance callbacks / FSM (implemented in handlers.finance)
 router.callback_query.register(cb_stake_plan, F.data.startswith("stake_plan_"), StateFilter("*"))
 router.message.register(process_stake_amount, StateFilter(UserStates.waiting_for_stake_amount))
@@ -103,6 +135,7 @@ async def check_ton_dep_from_webapp(message: Message) -> None:
 
 @router.message(CommandStart(), StateFilter("*"))
 async def start_cmd(message: Message, state: FSMContext):
+    await _maybe_notify_app_update(message)
     user_id = message.from_user.id
     args = message.text.split()
     await state.clear()
