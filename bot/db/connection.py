@@ -168,6 +168,7 @@ async def init_db() -> None:
         for _ddl in (
             "ALTER TABLE users ADD COLUMN referral_code TEXT",
             "ALTER TABLE users ADD COLUMN referral_count INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN seen_app_version TEXT DEFAULT ''",
             "ALTER TABLE users ADD COLUMN btc_balance REAL DEFAULT 0",
             "ALTER TABLE users ADD COLUMN eth_balance REAL DEFAULT 0",
         ):
@@ -320,3 +321,4 @@ async def init_db() -> None:
             (str(SCHEMA_VERSION),),
         )
         await db.commit()
+
