@@ -82,6 +82,8 @@ class Settings:
     backup_enabled: bool = True
     backup_interval_sec: float = 3600.0
     backup_dir: str = "backups"
+    app_version: str = "1.0.0"
+    app_changelog: str = ""
     database_url: str = ""  # optional postgres URL for future / external tools
     bot_username: str = ""
     referral_l1_reward: float = 1.0
@@ -172,6 +174,9 @@ def load_settings() -> Settings:
         backup_enabled=_bool(os.getenv("BACKUP_ENABLED"), True),
         backup_interval_sec=float(os.getenv("BACKUP_INTERVAL_SEC", "3600")),
         backup_dir=os.getenv("BACKUP_DIR", "backups").strip(),
+        app_version=os.getenv("APP_VERSION", "1.0.0").strip() or "1.0.0",
+        app_changelog=os.getenv("APP_CHANGELOG", "").strip(),
+        bot_username=os.getenv("BOT_USERNAME", "").strip().lstrip("@"),
         database_url=os.getenv("DATABASE_URL", "").strip(),
     )
 
