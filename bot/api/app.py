@@ -1547,6 +1547,173 @@ async def api_admin_credit_asset(request: web.Request) -> web.Response:
         row = await (await db.execute(f"SELECT {col} FROM users WHERE user_id=?", (uid,))).fetchone()
     return web.json_response({"ok": True, "user_id": uid, "asset": asset, "balance": float(row[0] or 0)})
 
+
+
+# --------------- Support (AI triage + human ticket) ---------------
+_SUPPORT_KB = [
+    {
+        "keys": ["deposit", "واریز", "memo", "ممو", "شارژ"],
+        "en": "To deposit: Wallet → Deposit. Copy the exchange address and your personal memo (cx_YOUR_ID). Send only TON on TON network with that memo. Auto-credit usually takes a few minutes after confirmation.",
+        "fa": "برای واریز: کیف پول → واریز. آدرس صرافی و ممو شخصی (cx_شناسه) را کپی کنید. فقط TON روی شبکه TON با همان ممو بفرستید. پس از تأیید شبکه معمولاً چند دقیقه طول می‌کشد.",
+    },
+    {
+        "keys": ["withdraw", "برداشت", "pin", "پین", "whitelist", "سفید"],
+        "en": "Withdraw needs: (1) 4-digit PIN in bot settings, (2) whitelist address, (3) Wallet → Withdraw with amount + whitelist + PIN. Large amounts may wait for admin approval.",
+        "fa": "برداشت نیاز دارد: (۱) PIN چهاررقمی در تنظیمات ربات، (۲) آدرس لیست سفید، (۳) کیف پول → برداشت با مبلغ + آدرس سفید + PIN. مبالغ بالا ممکن است منتظر تأیید ادمین بمانند.",
+    },
+    {
+        "keys": ["binary", "باینری", "trade", "معامله", "up", "down", "صعود", "نزول"],
+        "en": "Binary: pick symbol, duration, stake, then UP/DOWN. Settlement uses server price at expiry (chart is visual only). Payout is shown before you open.",
+        "fa": "باینری: نماد، مدت، مبلغ و جهت صعود/نزول. تسویه با قیمت سرور در سررسید است (چارت فقط نمایشی است). نرخ پرداخت قبل از باز شدن نشان داده می‌شود.",
+    },
+    {
+        "keys": ["swap", "سواپ", "تبدیل", "slippage", "اسلیپ"],
+        "en": "Swap converts internal ledger balances at a live-related rate with a fee. If rate moves beyond your slippage limit, the swap is rejected — retry with higher slippage or smaller size.",
+        "fa": "سواپ موجودی داخلی را با نرخ نزدیک بازار و کارمزد تبدیل می‌کند. اگر نرخ از حد اسلیپیج خارج شود رد می‌شود — با تحمل بیشتر یا مبلغ کمتر دوباره تلاش کنید.",
+    },
+    {
+        "keys": ["kyc", "احراز", "verify", "مدارک", "passport"],
+        "en": "KYC increases withdraw limits. Complete phone/docs steps in the KYC page. Only real documents. Status becomes pending until admin review.",
+        "fa": "KYC سقف برداشت را بالا می‌برد. مراحل تلفن/مدارک را در صفحه احراز کامل کنید. فقط مدارک واقعی. وضعیت تا بررسی ادمین در انتظار می‌ماند.",
+    },
+    {
+        "keys": ["referral", "معرف", "invite", "دعوت", "کد"],
+        "en": "Open Referral to copy your code or t.me link. Friends must join with your code. Rewards follow server rules (e.g. after signup/KYC).",
+        "fa": "بخش معرف را باز کنید و کد یا لینک را کپی کنید. دوستان باید با کد شما وارد شوند. پاداش طبق قوانین سرور است.",
+    },
+    {
+        "keys": ["balance", "موجودی", "zero", "صفر", "load", "session", "نشست"],
+        "en": "If balance does not load: close Mini App, send /start in the bot, reopen from the bot button. Balance comes from the server session (initData).",
+        "fa": "اگر موجودی لود نشد: مینی‌اپ را ببندید، در ربات /start بزنید و دوباره از دکمه ربات باز کنید. موجودی از نشست سرور می‌آید.",
+    },
+    {
+        "keys": ["seed", "mnemonic", "private", "کلید", "عبارت", "بازیابی"],
+        "en": "CX staff will NEVER ask for seed phrases or private keys. Only use the official bot. Report scams to support ticket.",
+        "fa": "کارکنان CX هرگز عبارت بازیابی یا کلید خصوصی نمی‌خواهند. فقط از ربات رسمی استفاده کنید. کلاهبرداری را با تیکت گزارش دهید.",
+    },
+]
+
+
+def _support_ai_reply(message: str, lang: str = "en") -> dict:
+    text = (message or "").strip().lower()
+    if not text:
+        return {
+            "reply": "Please describe your issue." if lang != "fa" else "لطفاً مشکل خود را بنویسید.",
+            "confidence": 0.0,
+            "suggest_human": False,
+        }
+    best = None
+    best_score = 0
+    for item in _SUPPORT_KB:
+        score = sum(1 for k in item["keys"] if k in text)
+        if score > best_score:
+            best_score = score
+            best = item
+    if best and best_score > 0:
+        reply = best["fa"] if lang == "fa" else best["en"]
+        conf = min(0.95, 0.45 + 0.2 * best_score)
+        return {"reply": reply, "confidence": conf, "suggest_human": conf < 0.55}
+    # fallback
+    if lang == "fa":
+        return {
+            "reply": (
+                "پاسخ قطعی از پایگاه دانش پیدا نشد. "
+                "می‌توانید سوال را دقیق‌تر بنویسید (واریز، برداشت، باینری، سواپ، KYC) "
+                "یا به کارشناس انسانی ارجاع دهید."
+            ),
+            "confidence": 0.15,
+            "suggest_human": True,
+        }
+    return {
+        "reply": (
+            "I could not find a confident answer. "
+            "Try keywords like deposit, withdraw, binary, swap, KYC — "
+            "or escalate to a human agent."
+        ),
+        "confidence": 0.15,
+        "suggest_human": True,
+    }
+
+
+async def api_support_chat(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    if not financial_rate_limit(validated.user.id, "swap"):  # reuse moderate limit
+        # softer: use generic
+        pass
+    if not rate_limit("support:%s" % validated.user.id, limit=30, window_sec=60):
+        raise web.HTTPTooManyRequests(text='{"error":"rate_limited"}', content_type="application/json")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    msg = str(body.get("message") or body.get("text") or "")
+    lang = str(body.get("lang") or "en")
+    if lang not in ("en", "fa"):
+        lang = "en"
+    result = _support_ai_reply(msg, lang)
+    return web.json_response({"ok": True, **result, "mode": "ai"})
+
+
+async def api_support_ticket_create(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    if not rate_limit("support_ticket:%s" % validated.user.id, limit=5, window_sec=3600):
+        raise web.HTTPTooManyRequests(text='{"error":"rate_limited"}', content_type="application/json")
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+    msg = str(body.get("message") or "").strip()
+    if len(msg) < 5:
+        raise web.HTTPBadRequest(text='{"error":"message_too_short"}', content_type="application/json")
+    if len(msg) > 2000:
+        msg = msg[:2000]
+    import aiosqlite
+    async with aiosqlite.connect(settings.db_name) as db:
+        cur = await db.execute(
+            "INSERT INTO support_tickets (user_id, message) VALUES (?, ?)",
+            (validated.user.id, msg),
+        )
+        await db.commit()
+        tid = cur.lastrowid
+    # notify admin
+    try:
+        from aiogram import Bot
+        bot = Bot(token=settings.bot_token)
+        preview = msg[:300]
+        await bot.send_message(
+            settings.admin_id,
+            f"New support ticket #{tid}\nUser: {validated.user.id}\n{preview}",
+        )
+        await bot.session.close()
+    except Exception:
+        logger.exception("support ticket admin notify failed")
+    return web.json_response({"ok": True, "ticket_id": tid, "status": "open"})
+
+
+async def api_support_tickets(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    import aiosqlite
+    rows = []
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT ticket_id, message, status, created_at
+            FROM support_tickets WHERE user_id=?
+            ORDER BY ticket_id DESC LIMIT 20
+            """,
+            (validated.user.id,),
+        )
+        for r in await cur.fetchall():
+            rows.append({
+                "ticket_id": r["ticket_id"],
+                "message": r["message"],
+                "status": r["status"],
+                "created_at": r["created_at"],
+            })
+    return web.json_response({"ok": True, "tickets": rows})
+
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -1599,6 +1766,9 @@ def create_api_app() -> web.Application:
     app.router.add_post("/api/sniper/open", api_sniper_open)
     app.router.add_post("/api/sniper/settle", api_sniper_settle)
     app.router.add_get("/api/sniper/history", api_sniper_history)
+    app.router.add_post("/api/support/chat", api_support_chat)
+    app.router.add_post("/api/support/ticket", api_support_ticket_create)
+    app.router.add_get("/api/support/tickets", api_support_tickets)
     app.router.add_route("OPTIONS", "/api/{tail:.*}", health)
     return app
 
