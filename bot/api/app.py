@@ -1714,6 +1714,208 @@ async def api_support_tickets(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "tickets": rows})
 
 
+
+
+async def api_user_report(request: web.Request) -> web.Response:
+    """Full activity report for the authenticated user (summary + rows)."""
+    validated = _authenticate(request)
+    uid = int(validated.user.id)
+    import aiosqlite
+    from bot.db import get_user_data
+
+    summary = {
+        "user_id": uid,
+        "generated_at": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "balance_ton": 0.0,
+        "balance_usdt": 0.0,
+        "balance_btc": 0.0,
+        "balance_eth": 0.0,
+        "kyc_level": 0,
+        "tx_count": 0,
+        "deposit_ton": 0.0,
+        "withdraw_ton": 0.0,
+        "binary_trades": 0,
+        "binary_wins": 0,
+        "binary_losses": 0,
+        "binary_volume": 0.0,
+        "binary_pnl": 0.0,
+        "sniper_rounds": 0,
+        "sniper_wins": 0,
+        "swap_count": 0,
+        "referral_invites": 0,
+    }
+    ledger_rows = []
+    binary_rows = []
+    sniper_rows = []
+    swap_rows = []
+
+    try:
+        ud = await get_user_data(uid)
+        if ud:
+            # typical layout: lang, kyc, ..., balance at index 4
+            try:
+                summary["kyc_level"] = int(ud[1] or 0)
+            except Exception:
+                pass
+            try:
+                summary["balance_ton"] = float(ud[4] or 0)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        # balances from users if columns exist
+        try:
+            row = await (await db.execute(
+                "SELECT balance, usdt_balance, COALESCE(btc_balance,0), COALESCE(eth_balance,0), COALESCE(kyc_level,0) FROM users WHERE user_id=?",
+                (uid,),
+            )).fetchone()
+            if row:
+                summary["balance_ton"] = float(row[0] or 0)
+                summary["balance_usdt"] = float(row[1] or 0)
+                summary["balance_btc"] = float(row[2] or 0)
+                summary["balance_eth"] = float(row[3] or 0)
+                summary["kyc_level"] = int(row[4] or 0)
+        except Exception:
+            try:
+                row = await (await db.execute(
+                    "SELECT balance, usdt_balance FROM users WHERE user_id=?", (uid,)
+                )).fetchone()
+                if row:
+                    summary["balance_ton"] = float(row[0] or 0)
+                    summary["balance_usdt"] = float(row[1] or 0)
+            except Exception:
+                pass
+
+        try:
+            cur = await db.execute(
+                """
+                SELECT id, kind, amount, asset, balance_after, meta, created_at
+                FROM transactions WHERE user_id=?
+                ORDER BY id DESC LIMIT 200
+                """,
+                (uid,),
+            )
+            for r in await cur.fetchall():
+                kind = str(r["kind"] or "")
+                amt = float(r["amount"] or 0)
+                ledger_rows.append({
+                    "id": r["id"],
+                    "kind": kind,
+                    "amount": amt,
+                    "asset": r["asset"] if "asset" in r.keys() else "TON",
+                    "balance_after": float(r["balance_after"] or 0) if r["balance_after"] is not None else None,
+                    "created_at": r["created_at"],
+                })
+                summary["tx_count"] += 1
+                lk = kind.lower()
+                if "deposit" in lk or lk in ("credit_deposit", "ton_deposit"):
+                    summary["deposit_ton"] += abs(amt)
+                if "withdraw" in lk and "refund" not in lk and "hold" not in lk:
+                    if amt < 0 or "complete" in lk or "done" in lk:
+                        summary["withdraw_ton"] += abs(amt)
+        except Exception:
+            logger.exception("report ledger")
+
+        try:
+            cur = await db.execute(
+                """
+                SELECT id, symbol, direction, amount, status, profit, entry_price, created_at
+                FROM binary_trades WHERE user_id=?
+                ORDER BY id DESC LIMIT 100
+                """,
+                (uid,),
+            )
+            for r in await cur.fetchall():
+                st = str(r["status"] or "").lower()
+                amt = float(r["amount"] or 0)
+                profit = float(r["profit"] or 0) if r["profit"] is not None else 0.0
+                binary_rows.append({
+                    "id": r["id"],
+                    "symbol": r["symbol"],
+                    "direction": r["direction"],
+                    "amount": amt,
+                    "status": st,
+                    "profit": profit,
+                    "entry_price": r["entry_price"],
+                    "created_at": r["created_at"],
+                })
+                summary["binary_trades"] += 1
+                summary["binary_volume"] += amt
+                if st in ("won", "win"):
+                    summary["binary_wins"] += 1
+                    summary["binary_pnl"] += profit
+                elif st in ("lost", "lose"):
+                    summary["binary_losses"] += 1
+                    summary["binary_pnl"] += profit if profit else -amt
+        except Exception:
+            logger.exception("report binary")
+
+        try:
+            cur = await db.execute(
+                """
+                SELECT id, direction, amount, status, profit, created_at
+                FROM sniper_rounds WHERE user_id=?
+                ORDER BY id DESC LIMIT 100
+                """,
+                (uid,),
+            )
+            for r in await cur.fetchall():
+                st = str(r["status"] or "").lower()
+                sniper_rows.append({
+                    "id": r["id"],
+                    "direction": r["direction"],
+                    "amount": float(r["amount"] or 0),
+                    "status": st,
+                    "profit": float(r["profit"] or 0) if r["profit"] is not None else 0.0,
+                    "created_at": r["created_at"],
+                })
+                summary["sniper_rounds"] += 1
+                if st in ("won", "win") or (r["profit"] and float(r["profit"]) > 0):
+                    summary["sniper_wins"] += 1
+        except Exception:
+            pass
+
+        try:
+            cur = await db.execute(
+                """
+                SELECT id, kind, amount, created_at FROM transactions
+                WHERE user_id=? AND (kind LIKE '%swap%' OR kind LIKE '%SWAP%')
+                ORDER BY id DESC LIMIT 50
+                """,
+                (uid,),
+            )
+            for r in await cur.fetchall():
+                swap_rows.append({
+                    "id": r["id"],
+                    "kind": r["kind"],
+                    "amount": float(r["amount"] or 0),
+                    "created_at": r["created_at"],
+                })
+                summary["swap_count"] += 1
+        except Exception:
+            pass
+
+        try:
+            n = await (await db.execute(
+                "SELECT COUNT(*) FROM users WHERE referrer_id=?", (uid,)
+            )).fetchone()
+            summary["referral_invites"] = int(n[0] or 0)
+        except Exception:
+            pass
+
+    return web.json_response({
+        "ok": True,
+        "summary": summary,
+        "ledger": ledger_rows,
+        "binary": binary_rows,
+        "sniper": sniper_rows,
+        "swaps": swap_rows,
+    })
+
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -1744,6 +1946,7 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/me", api_me)
     app.router.add_get("/api/balances", api_balances)
     app.router.add_get("/api/transactions", api_transactions)
+    app.router.add_get("/api/report", api_user_report)
     app.router.add_get("/api/withdraw/limits", api_withdraw_limits)
     app.router.add_post("/api/withdraw", api_withdraw)
     app.router.add_post("/api/ping", api_ping)
