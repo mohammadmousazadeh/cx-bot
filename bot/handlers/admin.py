@@ -181,6 +181,10 @@ _admin_lang: dict[int, str] = {}
 _2fa_sessions: dict[int, float] = {}  # uid -> ok_until
 
 
+
+def _toast(uid: int, fa: str, en: str) -> str:
+    return fa if _lang(uid) == "fa" else en
+
 def _lang(uid: int) -> str:
     return _admin_lang.get(int(uid), "fa")
 
@@ -256,8 +260,8 @@ def admin_kb(uid: int, menu: str = "home") -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=("کنسول وب" if fa else "Web console"), web_app=WebAppInfo(url=admin_webapp_url(uid)))],
             [
-                InlineKeyboardButton(text=t["btn_refresh"], callback_data="adm_refresh"),
-                InlineKeyboardButton(text=t["btn_lang"], callback_data="adm_lang"),
+                InlineKeyboardButton(text=("بروزرسانی" if fa else "Refresh"), callback_data="adm_refresh"),
+                InlineKeyboardButton(text=("English" if fa else "فارسی"), callback_data="adm_lang"),
             ],
             [InlineKeyboardButton(text=("قفل: " if fa else "Freeze: ") + freeze, callback_data="adm_toggle_freeze"),
              InlineKeyboardButton(text=("تعمیر: " if fa else "Maint: ") + maint, callback_data="adm_toggle_maint")],
@@ -576,21 +580,51 @@ async def cb_metrics(callback: CallbackQuery):
     try:
         from bot.services.monitoring import snapshot
         snap = snapshot()
-        lines.append("آمار زنده" if fa else "Live metrics")
-        lines.append(f"uptime: {snap.get('uptime_sec')}s")
-        for k, v in (snap.get("counters") or {}).items():
-            lines.append(f"{k}: {v}")
-        for e in (snap.get("recent_chain_errors") or [])[:3]:
-            lines.append(f"err {e.get('source')}: {str(e.get('detail'))[:80]}")
+        counters = snap.get("counters") or {}
+        labels_fa = {
+            "uptime_sec": "آپ‌تایم (ثانیه)",
+            "chain_errors": "خطای زنجیره",
+            "withdraw_auto_ok": "برداشت خودکار موفق",
+            "withdraw_auto_fail": "برداشت خودکار ناموفق",
+            "deposits_credited": "واریز ثبت‌شده",
+            "binary_settled": "باینری تسویه‌شده",
+            "swaps": "سواپ",
+        }
+        labels_en = {
+            "uptime_sec": "Uptime (sec)",
+            "chain_errors": "Chain errors",
+            "withdraw_auto_ok": "Auto withdraw OK",
+            "withdraw_auto_fail": "Auto withdraw fail",
+            "deposits_credited": "Deposits credited",
+            "binary_settled": "Binary settled",
+            "swaps": "Swaps",
+        }
+        labels = labels_fa if fa else labels_en
+        lines.append("**آمار زنده**" if fa else "**Live metrics**")
+        lines.append("")
+        up = snap.get("uptime_sec")
+        lines.append(f"{labels.get('uptime_sec', 'uptime')}: `{up}`")
+        for k, v in counters.items():
+            lab = labels.get(k, k.replace("_", " "))
+            lines.append(f"{lab}: `{v}`")
+        errs = snap.get("recent_chain_errors") or []
+        if errs:
+            lines.append("")
+            lines.append(("آخرین خطاهای chain:" if fa else "Recent chain errors:"))
+            for e in errs[:3]:
+                lines.append(f"- {e.get('source')}: {str(e.get('detail'))[:80]}")
     except Exception as exc:
         lines.append(str(exc))
-    lines.append(f"APP_VERSION: {getattr(settings, 'app_version', '?')}")
+    ver = getattr(settings, "app_version", "?")
+    lines.append("")
+    lines.append(f"{'نسخه' if fa else 'Version'}: `{ver}`")
     text = "\n".join(lines)
     try:
-        await callback.message.edit_text(text, reply_markup=admin_kb(uid, "system"))
+        await callback.message.edit_text(text, reply_markup=admin_kb(uid, "system"), parse_mode="Markdown")
     except Exception:
-        await callback.message.answer(text, reply_markup=admin_kb(uid, "system"))
+        await callback.message.answer(text, reply_markup=admin_kb(uid, "system"), parse_mode="Markdown")
     await callback.answer()
+
 
 
 @router.callback_query(F.data == "adm_hot_wallet", StateFilter("*"))
@@ -649,7 +683,7 @@ async def process_admin_2fa(message: Message, state: FSMContext):
         return
     code = (message.text or "").strip()
     if not _admin_2fa_ok(code):
-        await message.answer("Invalid 2FA code" if _lang(message.from_user.id)!="fa" else "کد ۲FA نامعتبر")
+        await message.answer(_toast(message.from_user.id, "کد ۲FA نامعتبر", "Invalid 2FA code"))
         return
     import time as _time
     await state.update_data(admin_2fa_ok_until=_time.time() + 300)
@@ -657,7 +691,7 @@ async def process_admin_2fa(message: Message, state: FSMContext):
     data = await state.get_data()
     nxt = data.get("admin_2fa_next") or "home"
     await state.set_state(None)
-    await message.answer("2FA OK" if _lang(message.from_user.id)!="fa" else "تأیید ۲FA")
+    await message.answer(_toast(message.from_user.id, "تأیید ۲FA", "2FA OK"))
     # re-open home
     try:
         await message.answer(await _stats_text(message.from_user.id), reply_markup=admin_kb(message.from_user.id, "home"), parse_mode="Markdown")
@@ -669,33 +703,44 @@ async def process_admin_2fa(message: Message, state: FSMContext):
 @router.callback_query(F.data == "adm_2fa_unlock", StateFilter("*"))
 async def cb_2fa_unlock(callback: CallbackQuery, state: FSMContext):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     from bot.services.admin_2fa import is_2fa_enabled
     if not is_2fa_enabled():
-        await callback.answer("2FA not configured", show_alert=True)
+        await callback.answer(_toast(callback.from_user.id, "۲FA پیکربندی نشده", "2FA not configured"), show_alert=True)
         return
     await state.set_state(UserStates.waiting_for_admin_2fa)
     fa = _lang(callback.from_user.id) == "fa"
-    await callback.message.answer("کد ۶ رقمی Authenticator:" if fa else "Enter 6-digit Authenticator code:")
+    await callback.message.answer(_toast(callback.from_user.id, "کد ۶ رقمی Authenticator را بفرستید:", "Enter 6-digit Authenticator code:"))
     await callback.answer()
 
 @router.callback_query(F.data == "adm_lang", StateFilter("*"))
 async def cb_lang(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     uid = callback.from_user.id
-    _admin_lang[uid] = "en" if _lang(uid) == "fa" else "fa"
+    # Toggle: button shows the language you will switch TO
+    new_lang = "en" if _lang(uid) == "fa" else "fa"
+    _admin_lang[uid] = new_lang
     try:
-        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid), parse_mode="Markdown")
+        await callback.message.edit_text(
+            await _stats_text(uid),
+            reply_markup=admin_kb(uid, "home"),
+            parse_mode="Markdown",
+        )
     except Exception:
-        await callback.message.answer(await _stats_text(uid), reply_markup=admin_kb(uid), parse_mode="Markdown")
-    await callback.answer(_t(uid)["updated"])
+        await callback.message.answer(
+            await _stats_text(uid),
+            reply_markup=admin_kb(uid, "home"),
+            parse_mode="Markdown",
+        )
+    tip = "Language: English" if new_lang == "en" else "زبان: فارسی"
+    await callback.answer(tip)
 
 
 @router.callback_query(F.data == "adm_refresh", StateFilter("*"))
 async def cb_refresh(callback: CallbackQuery, state: FSMContext):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     await state.clear()
     uid = callback.from_user.id
     try:
@@ -708,14 +753,14 @@ async def cb_refresh(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "adm_toggle_freeze", StateFilter("*"))
 async def cb_freeze(callback: CallbackQuery):
     if not _admin_2fa_session_ok(callback.from_user.id):
-        await callback.answer("2FA required — System → Unlock 2FA", show_alert=True)
+        await callback.answer(_toast(callback.from_user.id, "نیاز به ۲FA — سیستم → باز کردن ۲FA", "2FA required — System → Unlock 2FA"), show_alert=True)
         return
     from bot.services.admin_2fa import is_2fa_enabled
     if is_2fa_enabled():
         st = callback.bot  # placeholder
     # 2FA: use recent window via FSM — simplified gate via data store
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     settings.emergency_freeze = not bool(settings.emergency_freeze)
     uid = callback.from_user.id
     await callback.answer(f"{_t(uid)['freeze']}: {settings.emergency_freeze}", show_alert=True)
@@ -728,14 +773,14 @@ async def cb_freeze(callback: CallbackQuery):
 @router.callback_query(F.data == "adm_toggle_maint", StateFilter("*"))
 async def cb_maint(callback: CallbackQuery):
     if not _admin_2fa_session_ok(callback.from_user.id):
-        await callback.answer("2FA required — System → Unlock 2FA", show_alert=True)
+        await callback.answer(_toast(callback.from_user.id, "نیاز به ۲FA — سیستم → باز کردن ۲FA", "2FA required — System → Unlock 2FA"), show_alert=True)
         return
     from bot.services.admin_2fa import is_2fa_enabled
     if is_2fa_enabled():
         st = callback.bot  # placeholder
     # 2FA: use recent window via FSM — simplified gate via data store
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     settings.maintenance_mode = not bool(getattr(settings, "maintenance_mode", False))
     uid = callback.from_user.id
     await callback.answer(f"{_t(uid)['maint']}: {settings.maintenance_mode}", show_alert=True)
@@ -748,7 +793,7 @@ async def cb_maint(callback: CallbackQuery):
 @router.callback_query(F.data == "adm_daily", StateFilter("*"))
 async def cb_daily(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     uid = callback.from_user.id
     t = _t(uid)
     today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -792,7 +837,7 @@ async def cb_daily(callback: CallbackQuery):
 @router.callback_query(F.data == "adm_withdraws", StateFilter("*"))
 async def cb_withdraws(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     uid = callback.from_user.id
     t = _t(uid)
     async with aiosqlite.connect(settings.db_name) as db:
@@ -829,15 +874,15 @@ async def cb_withdraws(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("adm_wd_ok_"), StateFilter("*"))
 async def cb_wd_ok(callback: CallbackQuery):
     if not _admin_2fa_session_ok(callback.from_user.id):
-        await callback.answer("2FA required", show_alert=True)
+        await callback.answer(_toast(callback.from_user.id, "نیاز به ۲FA", "2FA required"), show_alert=True)
         return
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     rid = int(callback.data.split("_")[-1])
     t = _t(callback.from_user.id)
     try:
         from bot.services.withdraw import settle_withdraw_onchain
-        await callback.answer("Sending…" if _lang(callback.from_user.id) == "en" else "در حال ارسال…")
+        await callback.answer(_toast(callback.from_user.id, "در حال ارسال…", "Sending…"))
         res = await settle_withdraw_onchain(rid)
         if not res.get("ok"):
             return await callback.answer(str(res.get("error") or res.get("reason")), show_alert=True)
@@ -853,7 +898,7 @@ async def cb_wd_ok(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("adm_wd_no_"), StateFilter("*"))
 async def cb_wd_no(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     rid = int(callback.data.split("_")[-1])
     t = _t(callback.from_user.id)
     try:
@@ -869,7 +914,7 @@ async def cb_wd_no(callback: CallbackQuery):
 @router.callback_query(F.data == "adm_tickets", StateFilter("*"))
 async def cb_tickets(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     uid = callback.from_user.id
     t = _t(uid)
     async with aiosqlite.connect(settings.db_name) as db:
@@ -912,19 +957,19 @@ async def cb_tickets(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("adm_ticket_close_"), StateFilter("*"))
 async def cb_ticket_close(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     tid = int(callback.data.split("_")[-1])
     async with aiosqlite.connect(settings.db_name) as db:
         await db.execute("UPDATE support_tickets SET status='closed' WHERE ticket_id=?", (tid,))
         await db.commit()
     await callback.message.edit_text((callback.message.text or "") + "\n\nClosed.")
-    await callback.answer("OK")
+    await callback.answer(_toast(callback.from_user.id, "انجام شد", "OK"))
 
 
 @router.callback_query(F.data == "adm_open_binary", StateFilter("*"))
 async def cb_open_binary(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     t = _t(callback.from_user.id)
     async with aiosqlite.connect(settings.db_name) as db:
         db.row_factory = aiosqlite.Row
@@ -949,7 +994,7 @@ async def cb_open_binary(callback: CallbackQuery):
 @router.callback_query(F.data == "adm_prop", StateFilter("*"))
 async def cb_prop(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     t = _t(callback.from_user.id)
     async with aiosqlite.connect(settings.db_name) as db:
         db.row_factory = aiosqlite.Row
@@ -978,7 +1023,7 @@ async def cb_prop(callback: CallbackQuery):
 @router.callback_query(F.data == "adm_recent_tx", StateFilter("*"))
 async def cb_recent_tx(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     t = _t(callback.from_user.id)
     async with aiosqlite.connect(settings.db_name) as db:
         db.row_factory = aiosqlite.Row
@@ -1002,7 +1047,7 @@ async def cb_recent_tx(callback: CallbackQuery):
 @router.callback_query(F.data == "adm_kyc", StateFilter("*"))
 async def cb_kyc(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     uid = callback.from_user.id
     t = _t(uid)
     async with aiosqlite.connect(settings.db_name) as db:
@@ -1057,17 +1102,17 @@ async def cb_kyc(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("adm_kyc_set_"), StateFilter("*"))
 async def cb_kyc_set(callback: CallbackQuery):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     parts = callback.data.split("_")
     target_id = int(parts[3])
     level = int(parts[4])
     if level not in (0, 1, 2):
-        return await callback.answer("Bad level", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "سطح نامعتبر", "Bad level"), show_alert=True)
     async with aiosqlite.connect(settings.db_name) as db:
         await db.execute("UPDATE users SET kyc_level = ? WHERE user_id = ?", (level, target_id))
         await db.commit()
     await callback.message.edit_text((callback.message.text or "") + "\n\n-> KYC set to L%s" % level)
-    await callback.answer("L%s" % level)
+    await callback.answer(_toast(callback.from_user.id, "سطح L%s" % level, "L%s" % level))
     try:
         if level >= 2:
             msg = "KYC Level 2 approved." if _lang(callback.from_user.id) == "en" else "احراز هویت سطح ۲ تأیید شد."
@@ -1082,7 +1127,7 @@ async def cb_kyc_set(callback: CallbackQuery):
 @router.callback_query(F.data == "adm_lookup", StateFilter("*"))
 async def cb_lookup(callback: CallbackQuery, state: FSMContext):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     await state.set_state(UserStates.waiting_for_admin_lookup)
     await callback.message.answer(_t(callback.from_user.id)["lookup_ask"])
     await callback.answer()
@@ -1122,7 +1167,7 @@ async def process_lookup(message: Message, state: FSMContext):
 @router.callback_query(F.data == "adm_credit", StateFilter("*"))
 async def cb_credit(callback: CallbackQuery, state: FSMContext):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     await state.set_state(UserStates.waiting_for_admin_add_balance)
     await callback.message.answer(_t(callback.from_user.id)["credit_ask"], parse_mode="Markdown")
     await callback.answer()
@@ -1163,7 +1208,7 @@ async def process_credit(message: Message, state: FSMContext):
 @router.callback_query(F.data == "adm_debit", StateFilter("*"))
 async def cb_debit(callback: CallbackQuery, state: FSMContext):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     await state.set_state(UserStates.waiting_for_admin_debit)
     await callback.message.answer(_t(callback.from_user.id)["debit_ask"], parse_mode="Markdown")
     await callback.answer()
@@ -1198,7 +1243,7 @@ async def process_debit(message: Message, state: FSMContext):
 @router.callback_query(F.data == "adm_broadcast", StateFilter("*"))
 async def cb_broadcast(callback: CallbackQuery, state: FSMContext):
     if not _admin_only(callback.from_user.id):
-        return await callback.answer("Denied", show_alert=True)
+        return await callback.answer(_toast(callback.from_user.id, "دسترسی ندارید", "Denied"), show_alert=True)
     await state.set_state(UserStates.waiting_for_admin_broadcast)
     await callback.message.answer(_t(callback.from_user.id)["broadcast_ask"])
     await callback.answer()
