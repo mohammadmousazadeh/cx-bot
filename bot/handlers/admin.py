@@ -328,7 +328,7 @@ def admin_kb(uid: int, menu: str = "home") -> InlineKeyboardMarkup:
 
 
 async def _stats_text(uid: int) -> str:
-    """Premium admin dashboard card (Markdown)."""
+    """Premium framed admin dashboard (Telegram monospace-friendly)."""
     import aiosqlite
     from datetime import datetime
     fa = _lang(uid) == "fa"
@@ -338,7 +338,6 @@ async def _stats_text(uid: int) -> str:
     pending_wd = pending_amt = open_bin = open_tickets = active_prop = 0
     loans = 0.0
     today_users = today_tx = 0
-    today_vol = 0.0
     kyc_pending = 0
     try:
         async with aiosqlite.connect(settings.db_name) as db:
@@ -421,75 +420,89 @@ async def _stats_text(uid: int) -> str:
     except Exception:
         hot = False
 
+    def box(title: str, lines: list[str]) -> str:
+        # Telegram: use pre block for alignment
+        body = "\n".join(lines)
+        return f"**{title}**\n```\n{body}\n```"
+
     if fa:
-        alert = []
+        alerts = []
         if pending_wd:
-            alert.append(f"• {pending_wd} برداشت در صف ({pending_amt:.2f} TON)")
+            alerts.append(f"• برداشت در صف: {pending_wd} ({pending_amt:.2f} TON)")
         if kyc_pending:
-            alert.append(f"• {kyc_pending} KYC در انتظار")
+            alerts.append(f"• KYC معلق: {kyc_pending}")
         if settings.emergency_freeze:
-            alert.append("• قفل اضطراری فعال است")
+            alerts.append("• قفل اضطراری فعال")
         if settings.maintenance_mode:
-            alert.append("• حالت تعمیر فعال است")
-        alerts_block = ("\n".join(alert) if alert else "• مورد فوری نیست")
+            alerts.append("• حالت تعمیر فعال")
+        if not alerts:
+            alerts.append("• مورد فوری نیست")
+
+        b1 = box("خلاصه زنده", [
+            f"کاربران      {users:>8}",
+            f"امروز         {today_users:>8}",
+            f"دفترکل TON  {bal_ton:>10.2f}",
+            f"دفترکل USDT {bal_usdt:>10.2f}",
+        ])
+        b2 = box("صف‌ها", [
+            f"برداشت معلق  {pending_wd:>6}  ({pending_amt:.2f})",
+            f"تیکت باز     {open_tickets:>6}",
+            f"باینری باز   {open_bin:>6}",
+            f"پراپ فعال    {active_prop:>6}",
+            f"وام          {loans:>10.2f}",
+            f"KYC معلق     {kyc_pending:>6}",
+        ])
+        b3 = box("وضعیت سیستم", [
+            f"قفل اضطراری  {freeze}",
+            f"حالت تعمیر   {maint}",
+            f"۲FA ادمین    {'فعال' if twofa else 'خاموش'}",
+            f"ولت داغ      {'آماده' if hot else 'خاموش'}",
+            f"تراکنش امروز {today_tx:>6}",
+        ])
+        b4 = box("هشدارها", alerts)
         return (
-            f"**مرکز کنترل CX** · `v{ver}`\n"
-            f"{'─' * 22}\n"
-            f"**خلاصه زنده**\n"
-            f"کاربران: `{users}` · امروز: `{today_users}`\n"
-            f"دفترکل TON: `{bal_ton:,.2f}`\n"
-            f"دفترکل USDT: `{bal_usdt:,.2f}`\n"
-            f"{'─' * 22}\n"
-            f"**صف‌ها**\n"
-            f"برداشت معلق: `{pending_wd}` (`{pending_amt:.2f}`)\n"
-            f"تیکت باز: `{open_tickets}` · باینری باز: `{open_bin}`\n"
-            f"پراپ فعال: `{active_prop}` · وام: `{loans:.2f}`\n"
-            f"KYC معلق: `{kyc_pending}`\n"
-            f"{'─' * 22}\n"
-            f"**وضعیت سیستم**\n"
-            f"قفل اضطراری: **{freeze}**\n"
-            f"حالت تعمیر: **{maint}**\n"
-            f"۲FA ادمین: **{'فعال' if twofa else 'خاموش'}**\n"
-            f"ولت داغ: **{'آماده' if hot else 'غیرفعال'}**\n"
-            f"تراکنش امروز: `{today_tx}`\n"
-            f"{'─' * 22}\n"
-            f"**هشدارها**\n{alerts_block}\n"
-            f"{'─' * 22}\n"
+            f"**▸ مرکز کنترل CX**  `v{ver}`\n\n"
+            f"{b1}\n{b2}\n{b3}\n{b4}\n"
             f"_از منوی زیر بخش مورد نظر را باز کنید._"
         )
-    alert = []
+
+    alerts = []
     if pending_wd:
-        alert.append(f"• {pending_wd} withdraw(s) queued ({pending_amt:.2f} TON)")
+        alerts.append(f"• Pending WD: {pending_wd} ({pending_amt:.2f} TON)")
     if kyc_pending:
-        alert.append(f"• {kyc_pending} KYC pending")
+        alerts.append(f"• KYC pending: {kyc_pending}")
     if settings.emergency_freeze:
-        alert.append("• Emergency freeze ON")
+        alerts.append("• Emergency freeze ON")
     if settings.maintenance_mode:
-        alert.append("• Maintenance ON")
-    alerts_block = ("\n".join(alert) if alert else "• No urgent items")
+        alerts.append("• Maintenance ON")
+    if not alerts:
+        alerts.append("• No urgent items")
+
+    b1 = box("Live summary", [
+        f"Users         {users:>8}",
+        f"Today         {today_users:>8}",
+        f"Ledger TON  {bal_ton:>10.2f}",
+        f"Ledger USDT {bal_usdt:>10.2f}",
+    ])
+    b2 = box("Queues", [
+        f"Pending WD    {pending_wd:>6}  ({pending_amt:.2f})",
+        f"Open tickets  {open_tickets:>6}",
+        f"Open binary   {open_bin:>6}",
+        f"Active prop   {active_prop:>6}",
+        f"Loans         {loans:>10.2f}",
+        f"KYC pending   {kyc_pending:>6}",
+    ])
+    b3 = box("System", [
+        f"Freeze        {freeze}",
+        f"Maintenance   {maint}",
+        f"Admin 2FA     {'ON' if twofa else 'OFF'}",
+        f"Hot wallet    {'ready' if hot else 'off'}",
+        f"Tx today      {today_tx:>6}",
+    ])
+    b4 = box("Alerts", alerts)
     return (
-        f"**CX Control Center** · `v{ver}`\n"
-        f"{'─' * 22}\n"
-        f"**Live summary**\n"
-        f"Users: `{users}` · today: `{today_users}`\n"
-        f"Ledger TON: `{bal_ton:,.2f}`\n"
-        f"Ledger USDT: `{bal_usdt:,.2f}`\n"
-        f"{'─' * 22}\n"
-        f"**Queues**\n"
-        f"Pending WD: `{pending_wd}` (`{pending_amt:.2f}`)\n"
-        f"Tickets: `{open_tickets}` · Open binary: `{open_bin}`\n"
-        f"Active prop: `{active_prop}` · Loans: `{loans:.2f}`\n"
-        f"KYC pending: `{kyc_pending}`\n"
-        f"{'─' * 22}\n"
-        f"**System**\n"
-        f"Freeze: **{freeze}**\n"
-        f"Maintenance: **{maint}**\n"
-        f"Admin 2FA: **{'ON' if twofa else 'OFF'}**\n"
-        f"Hot wallet: **{'ready' if hot else 'off'}**\n"
-        f"Tx today: `{today_tx}`\n"
-        f"{'─' * 22}\n"
-        f"**Alerts**\n{alerts_block}\n"
-        f"{'─' * 22}\n"
+        f"**▸ CX Control Center**  `v{ver}`\n\n"
+        f"{b1}\n{b2}\n{b3}\n{b4}\n"
         f"_Open a section from the menu below._"
     )
 
@@ -576,49 +589,28 @@ async def cb_metrics(callback: CallbackQuery):
         return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
     uid = callback.from_user.id
     fa = _lang(uid) == "fa"
-    lines = []
     try:
         from bot.services.monitoring import snapshot
         snap = snapshot()
         counters = snap.get("counters") or {}
-        labels_fa = {
-            "uptime_sec": "آپ‌تایم (ثانیه)",
-            "chain_errors": "خطای زنجیره",
-            "withdraw_auto_ok": "برداشت خودکار موفق",
-            "withdraw_auto_fail": "برداشت خودکار ناموفق",
-            "deposits_credited": "واریز ثبت‌شده",
-            "binary_settled": "باینری تسویه‌شده",
-            "swaps": "سواپ",
+        labels = {
+            "chain_errors": ("خطای زنجیره", "Chain errors"),
+            "withdraw_auto_ok": ("برداشت خودکار OK", "Auto withdraw OK"),
+            "withdraw_auto_fail": ("برداشت خودکار Fail", "Auto withdraw fail"),
+            "deposits_credited": ("واریز ثبت‌شده", "Deposits credited"),
+            "binary_settled": ("باینری تسویه", "Binary settled"),
+            "swaps": ("سواپ", "Swaps"),
         }
-        labels_en = {
-            "uptime_sec": "Uptime (sec)",
-            "chain_errors": "Chain errors",
-            "withdraw_auto_ok": "Auto withdraw OK",
-            "withdraw_auto_fail": "Auto withdraw fail",
-            "deposits_credited": "Deposits credited",
-            "binary_settled": "Binary settled",
-            "swaps": "Swaps",
-        }
-        labels = labels_fa if fa else labels_en
-        lines.append("**آمار زنده**" if fa else "**Live metrics**")
-        lines.append("")
-        up = snap.get("uptime_sec")
-        lines.append(f"{labels.get('uptime_sec', 'uptime')}: `{up}`")
+        rows = [f"{'آپ‌تایم' if fa else 'Uptime':<16} {snap.get('uptime_sec', 0)}s"]
         for k, v in counters.items():
-            lab = labels.get(k, k.replace("_", " "))
-            lines.append(f"{lab}: `{v}`")
-        errs = snap.get("recent_chain_errors") or []
-        if errs:
-            lines.append("")
-            lines.append(("آخرین خطاهای chain:" if fa else "Recent chain errors:"))
-            for e in errs[:3]:
-                lines.append(f"- {e.get('source')}: {str(e.get('detail'))[:80]}")
+            lab = labels.get(k, (k, k))
+            rows.append(f"{(lab[0] if fa else lab[1]):<16} {v}")
+        body = "\n".join(rows)
+        ver = getattr(settings, "app_version", "?")
+        title = "آمار زنده" if fa else "Live metrics"
+        text = f"**{title}**  `v{ver}`\n```\n{body}\n```"
     except Exception as exc:
-        lines.append(str(exc))
-    ver = getattr(settings, "app_version", "?")
-    lines.append("")
-    lines.append(f"{'نسخه' if fa else 'Version'}: `{ver}`")
-    text = "\n".join(lines)
+        text = str(exc)
     try:
         await callback.message.edit_text(text, reply_markup=admin_kb(uid, "system"), parse_mode="Markdown")
     except Exception:
