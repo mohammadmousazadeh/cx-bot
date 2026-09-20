@@ -328,7 +328,7 @@ def admin_kb(uid: int, menu: str = "home") -> InlineKeyboardMarkup:
 
 
 async def _stats_text(uid: int) -> str:
-    """Premium framed admin dashboard (Telegram monospace-friendly)."""
+    """Clean admin dashboard — plain text (no Markdown) for stable Telegram layout."""
     import aiosqlite
     from datetime import datetime
     fa = _lang(uid) == "fa"
@@ -420,10 +420,7 @@ async def _stats_text(uid: int) -> str:
     except Exception:
         hot = False
 
-    def box(title: str, lines: list[str]) -> str:
-        # Telegram: use pre block for alignment
-        body = "\n".join(lines)
-        return f"**{title}**\n```\n{body}\n```"
+    line = "────────────────────"
 
     if fa:
         alerts = []
@@ -437,34 +434,32 @@ async def _stats_text(uid: int) -> str:
             alerts.append("• حالت تعمیر فعال")
         if not alerts:
             alerts.append("• مورد فوری نیست")
-
-        b1 = box("خلاصه زنده", [
-            f"کاربران      {users:>8}",
-            f"امروز         {today_users:>8}",
-            f"دفترکل TON  {bal_ton:>10.2f}",
-            f"دفترکل USDT {bal_usdt:>10.2f}",
+        return "\n".join([
+            f"مرکز کنترل CX  |  v{ver}",
+            line,
+            "خلاصه زنده",
+            f"کاربران: {users}  |  امروز: {today_users}",
+            f"دفترکل TON: {bal_ton:,.2f}",
+            f"دفترکل USDT: {bal_usdt:,.2f}",
+            line,
+            "صف‌ها",
+            f"برداشت معلق: {pending_wd} ({pending_amt:.2f})",
+            f"تیکت باز: {open_tickets}  |  باینری باز: {open_bin}",
+            f"پراپ فعال: {active_prop}  |  وام: {loans:.2f}",
+            f"KYC معلق: {kyc_pending}",
+            line,
+            "وضعیت سیستم",
+            f"قفل اضطراری: {freeze}",
+            f"حالت تعمیر: {maint}",
+            f"۲FA ادمین: {'فعال' if twofa else 'خاموش'}",
+            f"ولت داغ: {'آماده' if hot else 'خاموش'}",
+            f"تراکنش امروز: {today_tx}",
+            line,
+            "هشدارها",
+            *alerts,
+            line,
+            "از منوی زیر بخش مورد نظر را باز کنید.",
         ])
-        b2 = box("صف‌ها", [
-            f"برداشت معلق  {pending_wd:>6}  ({pending_amt:.2f})",
-            f"تیکت باز     {open_tickets:>6}",
-            f"باینری باز   {open_bin:>6}",
-            f"پراپ فعال    {active_prop:>6}",
-            f"وام          {loans:>10.2f}",
-            f"KYC معلق     {kyc_pending:>6}",
-        ])
-        b3 = box("وضعیت سیستم", [
-            f"قفل اضطراری  {freeze}",
-            f"حالت تعمیر   {maint}",
-            f"۲FA ادمین    {'فعال' if twofa else 'خاموش'}",
-            f"ولت داغ      {'آماده' if hot else 'خاموش'}",
-            f"تراکنش امروز {today_tx:>6}",
-        ])
-        b4 = box("هشدارها", alerts)
-        return (
-            f"**▸ مرکز کنترل CX**  `v{ver}`\n\n"
-            f"{b1}\n{b2}\n{b3}\n{b4}\n"
-            f"_از منوی زیر بخش مورد نظر را باز کنید._"
-        )
 
     alerts = []
     if pending_wd:
@@ -477,34 +472,32 @@ async def _stats_text(uid: int) -> str:
         alerts.append("• Maintenance ON")
     if not alerts:
         alerts.append("• No urgent items")
-
-    b1 = box("Live summary", [
-        f"Users         {users:>8}",
-        f"Today         {today_users:>8}",
-        f"Ledger TON  {bal_ton:>10.2f}",
-        f"Ledger USDT {bal_usdt:>10.2f}",
+    return "\n".join([
+        f"CX Control Center  |  v{ver}",
+        line,
+        "Live summary",
+        f"Users: {users}  |  Today: {today_users}",
+        f"Ledger TON: {bal_ton:,.2f}",
+        f"Ledger USDT: {bal_usdt:,.2f}",
+        line,
+        "Queues",
+        f"Pending WD: {pending_wd} ({pending_amt:.2f})",
+        f"Tickets: {open_tickets}  |  Open binary: {open_bin}",
+        f"Active prop: {active_prop}  |  Loans: {loans:.2f}",
+        f"KYC pending: {kyc_pending}",
+        line,
+        "System",
+        f"Freeze: {freeze}",
+        f"Maintenance: {maint}",
+        f"Admin 2FA: {'ON' if twofa else 'OFF'}",
+        f"Hot wallet: {'ready' if hot else 'off'}",
+        f"Tx today: {today_tx}",
+        line,
+        "Alerts",
+        *alerts,
+        line,
+        "Open a section from the menu below.",
     ])
-    b2 = box("Queues", [
-        f"Pending WD    {pending_wd:>6}  ({pending_amt:.2f})",
-        f"Open tickets  {open_tickets:>6}",
-        f"Open binary   {open_bin:>6}",
-        f"Active prop   {active_prop:>6}",
-        f"Loans         {loans:>10.2f}",
-        f"KYC pending   {kyc_pending:>6}",
-    ])
-    b3 = box("System", [
-        f"Freeze        {freeze}",
-        f"Maintenance   {maint}",
-        f"Admin 2FA     {'ON' if twofa else 'OFF'}",
-        f"Hot wallet    {'ready' if hot else 'off'}",
-        f"Tx today      {today_tx:>6}",
-    ])
-    b4 = box("Alerts", alerts)
-    return (
-        f"**▸ CX Control Center**  `v{ver}`\n\n"
-        f"{b1}\n{b2}\n{b3}\n{b4}\n"
-        f"_Open a section from the menu below._"
-    )
 
 
 
@@ -514,7 +507,7 @@ async def admin_dashboard(message: Message, state: FSMContext):
         return
     await state.clear()
     uid = message.from_user.id
-    await message.answer(await _stats_text(uid), reply_markup=admin_kb(uid), parse_mode="Markdown")
+    await message.answer(await _stats_text(uid), reply_markup=admin_kb(uid))
 
 
 
@@ -524,9 +517,9 @@ async def cb_menu_home(callback: CallbackQuery):
         return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
     uid = callback.from_user.id
     try:
-        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid, "home"), parse_mode="Markdown")
+        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid, "home"))
     except Exception:
-        await callback.message.answer(await _stats_text(uid), reply_markup=admin_kb(uid, "home"), parse_mode="Markdown")
+        await callback.message.answer(await _stats_text(uid), reply_markup=admin_kb(uid, "home"))
     await callback.answer()
 
 
@@ -538,7 +531,7 @@ async def cb_menu_system(callback: CallbackQuery):
     fa = _lang(uid) == "fa"
     title = "سیستم" if fa else "System"
     try:
-        await callback.message.edit_text(title + "\n\n" + await _stats_text(uid), reply_markup=admin_kb(uid, "system"), parse_mode="Markdown")
+        await callback.message.edit_text(title + "\n\n" + await _stats_text(uid), reply_markup=admin_kb(uid, "system"))
     except Exception:
         await callback.message.answer(title, reply_markup=admin_kb(uid, "system"))
     await callback.answer()
@@ -589,32 +582,35 @@ async def cb_metrics(callback: CallbackQuery):
         return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
     uid = callback.from_user.id
     fa = _lang(uid) == "fa"
+    line = "────────────────────"
     try:
         from bot.services.monitoring import snapshot
         snap = snapshot()
         counters = snap.get("counters") or {}
         labels = {
             "chain_errors": ("خطای زنجیره", "Chain errors"),
-            "withdraw_auto_ok": ("برداشت خودکار OK", "Auto withdraw OK"),
-            "withdraw_auto_fail": ("برداشت خودکار Fail", "Auto withdraw fail"),
+            "withdraw_auto_ok": ("برداشت خودکار موفق", "Auto withdraw OK"),
+            "withdraw_auto_fail": ("برداشت خودکار ناموفق", "Auto withdraw fail"),
             "deposits_credited": ("واریز ثبت‌شده", "Deposits credited"),
             "binary_settled": ("باینری تسویه", "Binary settled"),
             "swaps": ("سواپ", "Swaps"),
         }
-        rows = [f"{'آپ‌تایم' if fa else 'Uptime':<16} {snap.get('uptime_sec', 0)}s"]
+        rows = [
+            ("آمار زنده" if fa else "Live metrics") + f"  |  v{getattr(settings, 'app_version', '?')}",
+            line,
+            f"{'آپ‌تایم' if fa else 'Uptime'}: {snap.get('uptime_sec', 0)}s",
+        ]
         for k, v in counters.items():
             lab = labels.get(k, (k, k))
-            rows.append(f"{(lab[0] if fa else lab[1]):<16} {v}")
-        body = "\n".join(rows)
-        ver = getattr(settings, "app_version", "?")
-        title = "آمار زنده" if fa else "Live metrics"
-        text = f"**{title}**  `v{ver}`\n```\n{body}\n```"
+            rows.append(f"{lab[0] if fa else lab[1]}: {v}")
+        rows.append(line)
+        text = "\n".join(rows)
     except Exception as exc:
         text = str(exc)
     try:
-        await callback.message.edit_text(text, reply_markup=admin_kb(uid, "system"), parse_mode="Markdown")
+        await callback.message.edit_text(text, reply_markup=admin_kb(uid, "system"))
     except Exception:
-        await callback.message.answer(text, reply_markup=admin_kb(uid, "system"), parse_mode="Markdown")
+        await callback.message.answer(text, reply_markup=admin_kb(uid, "system"))
     await callback.answer()
 
 
@@ -686,7 +682,7 @@ async def process_admin_2fa(message: Message, state: FSMContext):
     await message.answer(_toast(message.from_user.id, "تأیید ۲FA", "2FA OK"))
     # re-open home
     try:
-        await message.answer(await _stats_text(message.from_user.id), reply_markup=admin_kb(message.from_user.id, "home"), parse_mode="Markdown")
+        await message.answer(await _stats_text(message.from_user.id), reply_markup=admin_kb(message.from_user.id, "home"))
     except Exception:
         pass
 
@@ -717,13 +713,11 @@ async def cb_lang(callback: CallbackQuery):
         await callback.message.edit_text(
             await _stats_text(uid),
             reply_markup=admin_kb(uid, "home"),
-            parse_mode="Markdown",
         )
     except Exception:
         await callback.message.answer(
             await _stats_text(uid),
             reply_markup=admin_kb(uid, "home"),
-            parse_mode="Markdown",
         )
     tip = "Language: English" if new_lang == "en" else "زبان: فارسی"
     await callback.answer(tip)
@@ -736,9 +730,9 @@ async def cb_refresh(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     uid = callback.from_user.id
     try:
-        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid), parse_mode="Markdown")
+        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid))
     except Exception:
-        await callback.message.answer(await _stats_text(uid), reply_markup=admin_kb(uid), parse_mode="Markdown")
+        await callback.message.answer(await _stats_text(uid), reply_markup=admin_kb(uid))
     await callback.answer(_t(uid)["updated"])
 
 
@@ -757,7 +751,7 @@ async def cb_freeze(callback: CallbackQuery):
     uid = callback.from_user.id
     await callback.answer(f"{_t(uid)['freeze']}: {settings.emergency_freeze}", show_alert=True)
     try:
-        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid), parse_mode="Markdown")
+        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid))
     except Exception:
         pass
 
@@ -777,7 +771,7 @@ async def cb_maint(callback: CallbackQuery):
     uid = callback.from_user.id
     await callback.answer(f"{_t(uid)['maint']}: {settings.maintenance_mode}", show_alert=True)
     try:
-        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid), parse_mode="Markdown")
+        await callback.message.edit_text(await _stats_text(uid), reply_markup=admin_kb(uid))
     except Exception:
         pass
 
