@@ -259,8 +259,8 @@ def admin_kb(uid: int, menu: str = "home") -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text=t["btn_refresh"], callback_data="adm_refresh"),
                 InlineKeyboardButton(text=t["btn_lang"], callback_data="adm_lang"),
             ],
-            [InlineKeyboardButton(text=f"{t['btn_freeze']}: {freeze}", callback_data="adm_toggle_freeze")],
-            [InlineKeyboardButton(text=f"{t['btn_maint']}: {maint}", callback_data="adm_toggle_maint")],
+            [InlineKeyboardButton(text=("قفل: " if fa else "Freeze: ") + freeze, callback_data="adm_toggle_freeze"),
+             InlineKeyboardButton(text=("تعمیر: " if fa else "Maint: ") + maint, callback_data="adm_toggle_maint")],
             [InlineKeyboardButton(text=t.get("btn_metrics", "آمار زنده" if fa else "Live metrics"), callback_data="adm_metrics")],
             [InlineKeyboardButton(text=("باز کردن ۲FA" if fa else "Unlock 2FA"), callback_data="adm_2fa_unlock")],
             [InlineKeyboardButton(text=f"« {back}", callback_data="adm_menu_home")],
@@ -306,103 +306,189 @@ def admin_kb(uid: int, menu: str = "home") -> InlineKeyboardMarkup:
 
     # home root — categories only
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=("کنسول وب" if fa else "Web console"), web_app=WebAppInfo(url=admin_webapp_url(uid)))],
+        [InlineKeyboardButton(text=("کنسول وب ادمین" if fa else "Admin Web Console"), web_app=WebAppInfo(url=admin_webapp_url(uid)))],
         [
-            InlineKeyboardButton(text=t["btn_refresh"], callback_data="adm_refresh"),
-            InlineKeyboardButton(text=t["btn_lang"], callback_data="adm_lang"),
+            InlineKeyboardButton(text=("بروزرسانی" if fa else "Refresh"), callback_data="adm_refresh"),
+            InlineKeyboardButton(text=("English" if fa else "فارسی"), callback_data="adm_lang"),
         ],
-        [InlineKeyboardButton(text=("⚙️ " + t["sec_system"].replace("▸ ", "").replace("▸", "").strip()) if fa else ("⚙️ System"), callback_data="adm_menu_system")],
-        [InlineKeyboardButton(text=("📋 " + t["sec_ops"].replace("▸ ", "").replace("▸", "").strip()) if fa else ("📋 Operations"), callback_data="adm_menu_ops")],
-        [InlineKeyboardButton(text=("👥 " + t["sec_users"].replace("▸ ", "").replace("▸", "").strip()) if fa else ("👥 Users"), callback_data="adm_menu_users")],
-        [InlineKeyboardButton(text=("🏦 " + t["sec_finance"].replace("▸ ", "").replace("▸", "").strip()) if fa else ("🏦 Treasury"), callback_data="adm_menu_treasury")],
+        [InlineKeyboardButton(text=("سیستم و امنیت" if fa else "System & Security"), callback_data="adm_menu_system")],
+        [InlineKeyboardButton(text=("عملیات و صف‌ها" if fa else "Operations & Queues"), callback_data="adm_menu_ops")],
+        [InlineKeyboardButton(text=("کاربران و KYC" if fa else "Users & KYC"), callback_data="adm_menu_users")],
+        [InlineKeyboardButton(text=("خزانه و مالی" if fa else "Treasury & Finance"), callback_data="adm_menu_treasury")],
+        [
+            InlineKeyboardButton(text=("گزارش روز" if fa else "Daily report"), callback_data="adm_daily"),
+            InlineKeyboardButton(text=("آمار زنده" if fa else "Live metrics"), callback_data="adm_metrics"),
+        ],
     ])
 
 
 
 async def _stats_text(uid: int) -> str:
-    t = _t(uid)
-    async with aiosqlite.connect(settings.db_name) as db:
-        db.row_factory = aiosqlite.Row
-        total_users = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
-        bal = await (await db.execute(
-            "SELECT COALESCE(SUM(balance),0), COALESCE(SUM(usdt_balance),0) FROM users"
-        )).fetchone()
-        ton_sum, usdt_sum = float(bal[0] or 0), float(bal[1] or 0)
-        pending_wd = await (await db.execute(
-            "SELECT COUNT(*), COALESCE(SUM(amount),0) FROM requests WHERE req_type='withdraw' AND status='pending'"
-        )).fetchone()
-        open_bin = (await (await db.execute(
-            "SELECT COUNT(*) FROM binary_trades WHERE status='open'"
-        )).fetchone())[0]
-        try:
-            prop_active = (await (await db.execute(
-                "SELECT COUNT(*) FROM prop_accounts WHERE status='active'"
-            )).fetchone())[0]
-        except Exception:
-            prop_active = 0
-        loans = (await (await db.execute(
-            "SELECT COALESCE(SUM(loan_amount),0) FROM users WHERE loan_amount > 0"
-        )).fetchone())[0]
-        try:
-            open_tickets = (await (await db.execute(
-                "SELECT COUNT(*) FROM support_tickets WHERE status='open'"
-            )).fetchone())[0]
-        except Exception:
-            open_tickets = 0
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        try:
-            new_u = (await (await db.execute(
-                "SELECT COUNT(*) FROM users WHERE date(join_date)=date(?)", (today,)
-            )).fetchone())[0]
-        except Exception:
-            new_u = 0
-        try:
-            tx_today = (await (await db.execute(
-                "SELECT COUNT(*) FROM transactions WHERE date(created_at)=date(?)", (today,)
-            )).fetchone())[0]
-        except Exception:
-            tx_today = 0
+    """Premium admin dashboard card (Markdown)."""
+    import aiosqlite
+    from datetime import datetime
+    fa = _lang(uid) == "fa"
+    tmap = _t(uid)
 
-    freeze_s = t["on"] if settings.emergency_freeze else t["off"]
-    maint_s = t["on"] if getattr(settings, "maintenance_mode", False) else t["off"]
-    # Premium monospace dashboard (Telegram Markdown)
-    if _lang(uid) == "fa":
+    users = bal_ton = bal_usdt = 0.0
+    pending_wd = pending_amt = open_bin = open_tickets = active_prop = 0
+    loans = 0.0
+    today_users = today_tx = 0
+    today_vol = 0.0
+    kyc_pending = 0
+    try:
+        async with aiosqlite.connect(settings.db_name) as db:
+            users = int((await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0] or 0)
+            row = await (await db.execute(
+                "SELECT COALESCE(SUM(balance),0), COALESCE(SUM(usdt_balance),0) FROM users"
+            )).fetchone()
+            bal_ton = float(row[0] or 0)
+            bal_usdt = float(row[1] or 0)
+            try:
+                row = await (await db.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(amount),0) FROM requests WHERE req_type='withdraw' AND status='pending'"
+                )).fetchone()
+                pending_wd = int(row[0] or 0)
+                pending_amt = float(row[1] or 0)
+            except Exception:
+                pass
+            try:
+                open_bin = int((await (await db.execute(
+                    "SELECT COUNT(*) FROM binary_trades WHERE status='open'"
+                )).fetchone())[0] or 0)
+            except Exception:
+                pass
+            try:
+                active_prop = int((await (await db.execute(
+                    "SELECT COUNT(*) FROM prop_accounts WHERE status='active'"
+                )).fetchone())[0] or 0)
+            except Exception:
+                try:
+                    active_prop = int((await (await db.execute(
+                        "SELECT COUNT(*) FROM prop_challenges WHERE status='active'"
+                    )).fetchone())[0] or 0)
+                except Exception:
+                    pass
+            try:
+                loans = float((await (await db.execute(
+                    "SELECT COALESCE(SUM(loan_amount),0) FROM users WHERE loan_amount>0"
+                )).fetchone())[0] or 0)
+            except Exception:
+                pass
+            try:
+                open_tickets = int((await (await db.execute(
+                    "SELECT COUNT(*) FROM tickets WHERE status='open'"
+                )).fetchone())[0] or 0)
+            except Exception:
+                pass
+            day0 = datetime.utcnow().strftime("%Y-%m-%d")
+            try:
+                today_users = int((await (await db.execute(
+                    "SELECT COUNT(*) FROM users WHERE date(join_date)=date(?)", (day0,)
+                )).fetchone())[0] or 0)
+            except Exception:
+                pass
+            try:
+                today_tx = int((await (await db.execute(
+                    "SELECT COUNT(*) FROM transactions WHERE date(created_at)=date(?)", (day0,)
+                )).fetchone())[0] or 0)
+            except Exception:
+                pass
+            try:
+                kyc_pending = int((await (await db.execute(
+                    "SELECT COUNT(*) FROM kyc_submissions WHERE status='pending'"
+                )).fetchone())[0] or 0)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    freeze = tmap["on"] if settings.emergency_freeze else tmap["off"]
+    maint = tmap["on"] if getattr(settings, "maintenance_mode", False) else tmap["off"]
+    ver = getattr(settings, "app_version", "1.0.0") or "1.0.0"
+    try:
+        from bot.services.admin_2fa import is_2fa_enabled
+        twofa = is_2fa_enabled()
+    except Exception:
+        twofa = False
+    try:
+        from bot.services.ton_chain import hot_wallet_configured
+        hot = hot_wallet_configured()
+    except Exception:
+        hot = False
+
+    if fa:
+        alert = []
+        if pending_wd:
+            alert.append(f"• {pending_wd} برداشت در صف ({pending_amt:.2f} TON)")
+        if kyc_pending:
+            alert.append(f"• {kyc_pending} KYC در انتظار")
+        if settings.emergency_freeze:
+            alert.append("• قفل اضطراری فعال است")
+        if settings.maintenance_mode:
+            alert.append("• حالت تعمیر فعال است")
+        alerts_block = ("\n".join(alert) if alert else "• مورد فوری نیست")
         return (
-            f"**{t['title']}**\n"
-            f"`────────────────────`\n"
+            f"**مرکز کنترل CX** · `v{ver}`\n"
+            f"{'─' * 22}\n"
             f"**خلاصه زنده**\n"
-            f"کاربران: `{total_users}` · امروز: `{new_u}`\n"
-            f"دفترکل TON: `{ton_sum:,.2f}`\n"
-            f"دفترکل USDT: `{usdt_sum:,.2f}`\n"
-            f"`────────────────────`\n"
+            f"کاربران: `{users}` · امروز: `{today_users}`\n"
+            f"دفترکل TON: `{bal_ton:,.2f}`\n"
+            f"دفترکل USDT: `{bal_usdt:,.2f}`\n"
+            f"{'─' * 22}\n"
             f"**صف‌ها**\n"
-            f"برداشت معلق: `{pending_wd[0]}` (`{float(pending_wd[1] or 0):,.2f}`)\n"
+            f"برداشت معلق: `{pending_wd}` (`{pending_amt:.2f}`)\n"
             f"تیکت باز: `{open_tickets}` · باینری باز: `{open_bin}`\n"
-            f"پراپ فعال: `{prop_active}` · وام: `{float(loans or 0):,.2f}`\n"
-            f"`────────────────────`\n"
+            f"پراپ فعال: `{active_prop}` · وام: `{loans:.2f}`\n"
+            f"KYC معلق: `{kyc_pending}`\n"
+            f"{'─' * 22}\n"
             f"**وضعیت سیستم**\n"
-            f"قفل اضطراری: `{freeze_s}`\n"
-            f"حالت تعمیر: `{maint_s}`\n"
-            f"تراکنش امروز: `{tx_today}`"
+            f"قفل اضطراری: **{freeze}**\n"
+            f"حالت تعمیر: **{maint}**\n"
+            f"۲FA ادمین: **{'فعال' if twofa else 'خاموش'}**\n"
+            f"ولت داغ: **{'آماده' if hot else 'غیرفعال'}**\n"
+            f"تراکنش امروز: `{today_tx}`\n"
+            f"{'─' * 22}\n"
+            f"**هشدارها**\n{alerts_block}\n"
+            f"{'─' * 22}\n"
+            f"_از منوی زیر بخش مورد نظر را باز کنید._"
         )
+    alert = []
+    if pending_wd:
+        alert.append(f"• {pending_wd} withdraw(s) queued ({pending_amt:.2f} TON)")
+    if kyc_pending:
+        alert.append(f"• {kyc_pending} KYC pending")
+    if settings.emergency_freeze:
+        alert.append("• Emergency freeze ON")
+    if settings.maintenance_mode:
+        alert.append("• Maintenance ON")
+    alerts_block = ("\n".join(alert) if alert else "• No urgent items")
     return (
-        f"**{t['title']}**\n"
-        f"`────────────────────`\n"
+        f"**CX Control Center** · `v{ver}`\n"
+        f"{'─' * 22}\n"
         f"**Live summary**\n"
-        f"Users: `{total_users}` · Today: `{new_u}`\n"
-        f"Ledger TON: `{ton_sum:,.2f}`\n"
-        f"Ledger USDT: `{usdt_sum:,.2f}`\n"
-        f"`────────────────────`\n"
+        f"Users: `{users}` · today: `{today_users}`\n"
+        f"Ledger TON: `{bal_ton:,.2f}`\n"
+        f"Ledger USDT: `{bal_usdt:,.2f}`\n"
+        f"{'─' * 22}\n"
         f"**Queues**\n"
-        f"Pending withdraw: `{pending_wd[0]}` (`{float(pending_wd[1] or 0):,.2f}`)\n"
-        f"Open tickets: `{open_tickets}` · Live binary: `{open_bin}`\n"
-        f"Active prop: `{prop_active}` · Loans: `{float(loans or 0):,.2f}`\n"
-        f"`────────────────────`\n"
-        f"**System status**\n"
-        f"Kill switch: `{freeze_s}`\n"
-        f"Maintenance: `{maint_s}`\n"
-        f"Tx today: `{tx_today}`"
+        f"Pending WD: `{pending_wd}` (`{pending_amt:.2f}`)\n"
+        f"Tickets: `{open_tickets}` · Open binary: `{open_bin}`\n"
+        f"Active prop: `{active_prop}` · Loans: `{loans:.2f}`\n"
+        f"KYC pending: `{kyc_pending}`\n"
+        f"{'─' * 22}\n"
+        f"**System**\n"
+        f"Freeze: **{freeze}**\n"
+        f"Maintenance: **{maint}**\n"
+        f"Admin 2FA: **{'ON' if twofa else 'OFF'}**\n"
+        f"Hot wallet: **{'ready' if hot else 'off'}**\n"
+        f"Tx today: `{today_tx}`\n"
+        f"{'─' * 22}\n"
+        f"**Alerts**\n{alerts_block}\n"
+        f"{'─' * 22}\n"
+        f"_Open a section from the menu below._"
     )
+
 
 
 @router.message(F.text.in_({"پنل مدیریت", "Admin Hub", "/admin"}), StateFilter("*"))
