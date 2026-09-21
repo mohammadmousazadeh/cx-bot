@@ -177,15 +177,138 @@ async def _klines_kucoin(symbol: str, interval: str, limit: int) -> list[dict[st
     return out[-int(limit):]
 
 
+_OKX_BAR = {
+    "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m",
+    "30m": "30m", "1h": "1H", "4h": "4H", "1d": "1D",
+}
+_BYBIT_INTERVAL = {
+    "1m": "1", "3m": "3", "5m": "5", "15m": "15",
+    "30m": "30", "1h": "60", "4h": "240", "1d": "D",
+}
+
+
+async def _klines_okx(symbol: str, interval: str, limit: int) -> list[dict]:
+    base, quote = _base_quote(symbol)
+    bar = _OKX_BAR.get(interval, "1m")
+    inst = f"{base}-{quote}"
+    url = (
+        f"https://www.okx.com/api/v5/market/candles"
+        f"?instId={inst}&bar={bar}&limit={int(limit)}"
+    )
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return []
+            data = await resp.json()
+    rows = data.get("data") or []
+    out: list[dict] = []
+    # OKX returns newest first
+    for k in reversed(rows):
+        try:
+            out.append({
+                "time": int(int(k[0]) / 1000),
+                "open": float(k[1]),
+                "high": float(k[2]),
+                "low": float(k[3]),
+                "close": float(k[4]),
+                "volume": float(k[5]) if len(k) > 5 else 0.0,
+            })
+        except Exception:
+            continue
+    return out
+
+
+async def _klines_bybit(symbol: str, interval: str, limit: int) -> list[dict]:
+    iv = _BYBIT_INTERVAL.get(interval, "1")
+    url = (
+        f"https://api.bybit.com/v5/market/kline"
+        f"?category=spot&symbol={symbol.upper()}&interval={iv}&limit={int(limit)}"
+    )
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return []
+            data = await resp.json()
+    rows = ((data.get("result") or {}).get("list")) or []
+    out: list[dict] = []
+    # Bybit newest first
+    for k in reversed(rows):
+        try:
+            out.append({
+                "time": int(int(k[0]) / 1000),
+                "open": float(k[1]),
+                "high": float(k[2]),
+                "low": float(k[3]),
+                "close": float(k[4]),
+                "volume": float(k[5]) if len(k) > 5 else 0.0,
+            })
+        except Exception:
+            continue
+    return out
+
+
+async def _klines_coingecko(symbol: str, interval: str, limit: int) -> list[dict]:
+    """OHLC fallback for TON/BTC/ETH when CEX APIs are blocked."""
+    base, quote = _base_quote(symbol)
+    if quote not in ("USDT", "USD"):
+        return []
+    gecko_ids = {"BTC": "bitcoin", "ETH": "ethereum", "TON": "the-open-network"}
+    gid = gecko_ids.get(base)
+    if not gid:
+        return []
+    # days mapping rough
+    days = 1
+    if interval in ("15m", "30m", "1h"):
+        days = 7
+    if interval in ("4h", "1d"):
+        days = 30
+    url = f"https://api.coingecko.com/api/v3/coins/{gid}/ohlc?vs_currency=usd&days={days}"
+    timeout = aiohttp.ClientTimeout(total=12)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return []
+            raw = await resp.json()
+    out: list[dict] = []
+    for k in raw:
+        try:
+            out.append({
+                "time": int(int(k[0]) / 1000),
+                "open": float(k[1]),
+                "high": float(k[2]),
+                "low": float(k[3]),
+                "close": float(k[4]),
+                "volume": 0.0,
+            })
+        except Exception:
+            continue
+    if limit and len(out) > limit:
+        out = out[-int(limit):]
+    return out
+
+
 async def get_klines(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 100) -> list[dict]:
-    """Return OHLCV candles — Binance first, KuCoin fallback."""
+    """Return OHLCV candles with multi-exchange fallback (TON-friendly)."""
     limit = max(10, min(int(limit or 100), 500))
     interval = interval or "1m"
-    for fetcher in (_klines_binance, _klines_kucoin):
+    symbol = (symbol or "BTCUSDT").upper().replace("-", "").replace("_", "").replace("/", "")
+    for fetcher in (_klines_binance, _klines_okx, _klines_bybit, _klines_kucoin, _klines_coingecko):
         try:
             rows = await fetcher(symbol, interval, limit)
-            if rows:
-                return rows
+            if rows and len(rows) >= 3:
+                # ensure ascending time unique
+                rows = sorted(rows, key=lambda x: x["time"])
+                dedup: list[dict] = []
+                seen = set()
+                for r in rows:
+                    if r["time"] in seen:
+                        continue
+                    seen.add(r["time"])
+                    dedup.append(r)
+                if len(dedup) >= 3:
+                    return dedup
         except Exception:
             continue
     return []
