@@ -266,6 +266,7 @@ def admin_kb(uid: int, menu: str = "home") -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=("قفل: " if fa else "Freeze: ") + freeze, callback_data="adm_toggle_freeze"),
              InlineKeyboardButton(text=("تعمیر: " if fa else "Maint: ") + maint, callback_data="adm_toggle_maint")],
             [InlineKeyboardButton(text=t.get("btn_metrics", "آمار زنده" if fa else "Live metrics"), callback_data="adm_metrics")],
+            [InlineKeyboardButton(text=("دستگاه‌ها" if fa else "Devices"), callback_data="adm_devices")],
             [InlineKeyboardButton(text=("باز کردن ۲FA" if fa else "Unlock 2FA"), callback_data="adm_2fa_unlock")],
             [InlineKeyboardButton(text=f"« {back}", callback_data="adm_menu_home")],
         ])
@@ -573,6 +574,62 @@ async def cb_menu_treasury(callback: CallbackQuery):
         await callback.message.edit_text(title, reply_markup=admin_kb(uid, "treasury"))
     except Exception:
         await callback.message.answer(title, reply_markup=admin_kb(uid, "treasury"))
+    await callback.answer()
+
+
+
+
+@router.callback_query(F.data == "adm_devices", StateFilter("*"))
+async def cb_devices(callback: CallbackQuery):
+    if not _admin_only(callback.from_user.id):
+        return await callback.answer(_t(callback.from_user.id)["denied"], show_alert=True)
+    uid = callback.from_user.id
+    fa = _lang(uid) == "fa"
+    import aiosqlite
+    lines = []
+    try:
+        async with aiosqlite.connect(settings.db_name) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                """
+                SELECT id, user_id, visitor_id, ip, platform, language, timezone, screen,
+                       hardware_concurrency, webgl_renderer, connection_type, last_seen_at
+                FROM device_fingerprints
+                ORDER BY last_seen_at DESC LIMIT 25
+                """
+            )
+            rows = await cur.fetchall()
+            if not rows:
+                text = "دستگاهی ثبت نشده." if fa else "No devices recorded yet."
+            else:
+                head = "دستگاه‌های اخیر" if fa else "Recent devices"
+                lines.append(head)
+                lines.append("────────────────")
+                for r in rows:
+                    gl = (r["webgl_renderer"] or "")[:40]
+                    lines.append(
+                        f"#{r['id']} uid={r['user_id'] or '-'} · {r['platform'] or '-'}"
+                    )
+                    lines.append(
+                        f"  IP {r['ip'] or '-'} · {r['language'] or '-'} · {r['timezone'] or '-'}"
+                    )
+                    lines.append(
+                        f"  screen {r['screen'] or '-'} · CPU {r['hardware_concurrency'] or '-'}"
+                    )
+                    if gl:
+                        lines.append(f"  GPU {gl}")
+                    lines.append(f"  net {r['connection_type'] or '-'} · {r['last_seen_at'] or ''}")
+                    lines.append("· · ·")
+                text = "\n".join(lines)
+    except Exception as e:
+        text = ("خطا: " if fa else "Error: ") + str(e)
+    # Telegram message limit
+    if len(text) > 3500:
+        text = text[:3500] + "\n…"
+    try:
+        await callback.message.edit_text(text, reply_markup=admin_kb(uid, "system"))
+    except Exception:
+        await callback.message.answer(text, reply_markup=admin_kb(uid, "system"))
     await callback.answer()
 
 
