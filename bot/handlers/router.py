@@ -191,6 +191,34 @@ async def start_cmd(message: Message, state: FSMContext):
         
         lang, kyc = row[0] or "fa", row[1]
         t = TEXTS.get(lang, TEXTS["fa"])
+        # Deep-link from Mini App: /start kyc
+        if len(args) > 1 and args[1].strip().lower() in ("kyc", "start_kyc", "verify"):
+            if user_id == settings.admin_id:
+                await db.execute("UPDATE users SET kyc_level = 2 WHERE user_id = ?", (user_id,))
+                await db.commit()
+            elif int(kyc or 0) >= 2:
+                user_data = await get_user_data(user_id)
+                return await message.answer(
+                    ("احراز هویت شما قبلاً تأیید شده است (سطح ۲)." if lang == "fa" else "Your identity is already verified (Level 2)."),
+                    reply_markup=get_main_dashboard_kb(lang, user_data[4], user_data[1], False, user_id=user_id),
+                )
+            elif int(kyc or 0) < 1:
+                kb = ReplyKeyboardMarkup(
+                    keyboard=[[KeyboardButton(text=t["btn_send_phone"], request_contact=True)]],
+                    resize_keyboard=True,
+                )
+                return await message.answer(
+                    (t.get("mandatory_phone_msg") or "Phone verification required first."),
+                    reply_markup=kb,
+                    parse_mode="Markdown",
+                )
+            else:
+                await message.answer(
+                    ("شروع احراز هویت سطح ۲" if lang == "fa" else "Starting Level 2 identity verification"),
+                )
+                await message.answer(t["kyc_ask_email"], reply_markup=get_cancel_kb(lang))
+                await state.set_state(UserStates.waiting_for_kyc_email)
+                return
         if user_id == settings.admin_id:
             await db.execute('UPDATE users SET kyc_level = 2 WHERE user_id = ?', (user_id,))
             await db.commit()
