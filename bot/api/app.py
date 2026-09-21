@@ -1997,9 +1997,9 @@ async def api_device_report(request: web.Request) -> web.Response:
             str(_f("canvas_hash") or "")[:64],
             str(_f("connection_type") or "")[:32],
             float(_f("downlink") or 0) or None,
-            float(_f("location_lat")) if _f("location_lat") is not None else None,
-            float(_f("location_lon")) if _f("location_lon") is not None else None,
-            float(_f("location_accuracy")) if _f("location_accuracy") is not None else None,
+            None,
+            None,
+            None,
             1,
             raw_json,
         )
@@ -2059,6 +2059,46 @@ async def api_device_me(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "devices": rows})
 
 
+
+
+async def api_admin_devices(request: web.Request) -> web.Response:
+    """Admin-only device list (no location fields)."""
+    validated = _authenticate(request)
+    if int(validated.user.id) != int(settings.admin_id):
+        raise web.HTTPForbidden(text='{"error":"forbidden"}', content_type="application/json")
+    import aiosqlite
+    limit = min(100, max(1, int(request.rel_url.query.get("limit", "40"))))
+    uid_filter = request.rel_url.query.get("user_id")
+    rows = []
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        if uid_filter:
+            cur = await db.execute(
+                """
+                SELECT id, user_id, visitor_id, ip, platform, language, timezone, screen,
+                       viewport, device_memory, hardware_concurrency, webgl_renderer,
+                       connection_type, created_at, last_seen_at
+                FROM device_fingerprints WHERE user_id=?
+                ORDER BY last_seen_at DESC LIMIT ?
+                """,
+                (int(uid_filter), limit),
+            )
+        else:
+            cur = await db.execute(
+                """
+                SELECT id, user_id, visitor_id, ip, platform, language, timezone, screen,
+                       viewport, device_memory, hardware_concurrency, webgl_renderer,
+                       connection_type, created_at, last_seen_at
+                FROM device_fingerprints
+                ORDER BY last_seen_at DESC LIMIT ?
+                """,
+                (limit,),
+            )
+        for r in await cur.fetchall():
+            rows.append(dict(r))
+    return web.json_response({"ok": True, "devices": rows, "count": len(rows)})
+
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -2092,6 +2132,7 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/report", api_user_report)
     app.router.add_post("/api/device/report", api_device_report)
     app.router.add_get("/api/device/me", api_device_me)
+    app.router.add_get("/api/admin/devices", api_admin_devices)
     app.router.add_get("/api/withdraw/limits", api_withdraw_limits)
     app.router.add_post("/api/withdraw", api_withdraw)
     app.router.add_post("/api/ping", api_ping)
