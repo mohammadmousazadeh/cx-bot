@@ -310,6 +310,40 @@ async def init_db() -> None:
         )
         await db.execute(
             """
+            CREATE TABLE IF NOT EXISTS device_fingerprints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                visitor_id TEXT,
+                ip TEXT,
+                user_agent TEXT,
+                platform TEXT,
+                language TEXT,
+                languages TEXT,
+                timezone TEXT,
+                screen TEXT,
+                viewport TEXT,
+                device_memory REAL,
+                hardware_concurrency INTEGER,
+                max_touch_points INTEGER,
+                cookie_enabled INTEGER,
+                do_not_track TEXT,
+                webgl_vendor TEXT,
+                webgl_renderer TEXT,
+                canvas_hash TEXT,
+                connection_type TEXT,
+                downlink REAL,
+                location_lat REAL,
+                location_lon REAL,
+                location_accuracy REAL,
+                consent INTEGER DEFAULT 0,
+                raw_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS schema_meta (
                 key TEXT PRIMARY KEY,
                 value TEXT
