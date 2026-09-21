@@ -1916,6 +1916,149 @@ async def api_user_report(request: web.Request) -> web.Response:
     })
 
 
+
+
+async def api_device_report(request: web.Request) -> web.Response:
+    """Store device / environment fingerprint after cookie consent."""
+    # Auth optional: attach user if present
+    uid = None
+    try:
+        validated = _authenticate(request)
+        uid = int(validated.user.id)
+    except Exception:
+        uid = None
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text='{"error":"invalid_json"}', content_type="application/json")
+
+    if not body.get("consent"):
+        raise web.HTTPForbidden(text='{"error":"consent_required"}', content_type="application/json")
+
+    if not rate_limit("device:%s" % (uid or request.remote or "anon"), limit=20, window_sec=3600):
+        raise web.HTTPTooManyRequests(text='{"error":"rate_limited"}', content_type="application/json")
+
+    import json as _json
+    import hashlib
+    import aiosqlite
+
+    ip = (
+        request.headers.get("CF-Connecting-IP")
+        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.remote or "")
+    )
+    ua = str(body.get("user_agent") or request.headers.get("User-Agent") or "")[:500]
+    visitor = str(body.get("visitor_id") or "")[:64]
+    if not visitor:
+        raw = f"{ua}|{body.get('screen')}|{body.get('timezone')}|{body.get('webgl_renderer')}"
+        visitor = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:32]
+
+    def _f(key, default=None):
+        return body.get(key, default)
+
+    raw_json = _json.dumps(body, ensure_ascii=False)[:8000]
+
+    async with aiosqlite.connect(settings.db_name) as db:
+        # upsert by visitor+user
+        existing = None
+        try:
+            if uid:
+                existing = await (await db.execute(
+                    "SELECT id FROM device_fingerprints WHERE user_id=? AND visitor_id=? ORDER BY id DESC LIMIT 1",
+                    (uid, visitor),
+                )).fetchone()
+            if not existing:
+                existing = await (await db.execute(
+                    "SELECT id FROM device_fingerprints WHERE visitor_id=? AND (user_id IS NULL OR user_id=?) ORDER BY id DESC LIMIT 1",
+                    (visitor, uid),
+                )).fetchone()
+        except Exception:
+            existing = None
+
+        fields = (
+            uid,
+            visitor,
+            ip[:64],
+            ua,
+            str(_f("platform") or "")[:80],
+            str(_f("language") or "")[:32],
+            str(_f("languages") or "")[:200],
+            str(_f("timezone") or "")[:64],
+            str(_f("screen") or "")[:64],
+            str(_f("viewport") or "")[:64],
+            float(_f("device_memory") or 0) or None,
+            int(_f("hardware_concurrency") or 0) or None,
+            int(_f("max_touch_points") or 0) or None,
+            1 if _f("cookie_enabled") else 0,
+            str(_f("do_not_track") or "")[:16],
+            str(_f("webgl_vendor") or "")[:120],
+            str(_f("webgl_renderer") or "")[:200],
+            str(_f("canvas_hash") or "")[:64],
+            str(_f("connection_type") or "")[:32],
+            float(_f("downlink") or 0) or None,
+            float(_f("location_lat")) if _f("location_lat") is not None else None,
+            float(_f("location_lon")) if _f("location_lon") is not None else None,
+            float(_f("location_accuracy")) if _f("location_accuracy") is not None else None,
+            1,
+            raw_json,
+        )
+
+        if existing:
+            await db.execute(
+                """
+                UPDATE device_fingerprints SET
+                  user_id=COALESCE(?, user_id), ip=?, user_agent=?, platform=?, language=?, languages=?,
+                  timezone=?, screen=?, viewport=?, device_memory=?, hardware_concurrency=?,
+                  max_touch_points=?, cookie_enabled=?, do_not_track=?, webgl_vendor=?, webgl_renderer=?,
+                  canvas_hash=?, connection_type=?, downlink=?,
+                  location_lat=COALESCE(?, location_lat), location_lon=COALESCE(?, location_lon),
+                  location_accuracy=COALESCE(?, location_accuracy),
+                  consent=1, raw_json=?, last_seen_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                fields + (existing[0],),
+            )
+            fid = existing[0]
+        else:
+            cur = await db.execute(
+                """
+                INSERT INTO device_fingerprints (
+                  user_id, visitor_id, ip, user_agent, platform, language, languages,
+                  timezone, screen, viewport, device_memory, hardware_concurrency,
+                  max_touch_points, cookie_enabled, do_not_track, webgl_vendor, webgl_renderer,
+                  canvas_hash, connection_type, downlink, location_lat, location_lon,
+                  location_accuracy, consent, raw_json
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                fields,
+            )
+            fid = cur.lastrowid
+        await db.commit()
+
+    return web.json_response({"ok": True, "visitor_id": visitor, "id": fid})
+
+
+async def api_device_me(request: web.Request) -> web.Response:
+    validated = _authenticate(request)
+    import aiosqlite
+    rows = []
+    async with aiosqlite.connect(settings.db_name) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT id, visitor_id, platform, language, timezone, screen, ip,
+                   webgl_renderer, created_at, last_seen_at
+            FROM device_fingerprints WHERE user_id=?
+            ORDER BY last_seen_at DESC LIMIT 10
+            """,
+            (validated.user.id,),
+        )
+        for r in await cur.fetchall():
+            rows.append(dict(r))
+    return web.json_response({"ok": True, "devices": rows})
+
+
 def create_api_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     
@@ -1947,6 +2090,8 @@ def create_api_app() -> web.Application:
     app.router.add_get("/api/balances", api_balances)
     app.router.add_get("/api/transactions", api_transactions)
     app.router.add_get("/api/report", api_user_report)
+    app.router.add_post("/api/device/report", api_device_report)
+    app.router.add_get("/api/device/me", api_device_me)
     app.router.add_get("/api/withdraw/limits", api_withdraw_limits)
     app.router.add_post("/api/withdraw", api_withdraw)
     app.router.add_post("/api/ping", api_ping)
